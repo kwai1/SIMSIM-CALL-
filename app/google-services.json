@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "163961095630",
+    "project_id": "r-m-call",
+    "storage_bucket": "r-m-call.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:163961095630:android:1d4da29c1bab70a7f6979f",
+        "android_client_info": {
+          "package_name": "com.rm.call"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCRmGZtzxI9blLOkH0GOSPzAJ_VNrc4cnY"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
