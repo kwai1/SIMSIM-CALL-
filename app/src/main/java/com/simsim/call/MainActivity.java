@@ -151,11 +151,32 @@ public class MainActivity extends Activity {
 
     private void showAdminGate() {
         setup(); header(); text("ADMIN CONTROL",22,WHITE,true);
-        final EditText key=input("رمز المدير",InputType.TYPE_CLASS_TEXT|InputType.TYPE_TEXT_VARIATION_PASSWORD);
-        Button enter=button("متابعة");
+        final EditText email=input("بريد المدير الإلكتروني",InputType.TYPE_CLASS_TEXT|InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS);
+        final EditText password=input("كلمة مرور المدير",InputType.TYPE_CLASS_TEXT|InputType.TYPE_TEXT_VARIATION_PASSWORD);
+        Button enter=button("دخول المدير");
         enter.setOnClickListener(v -> {
-            if(ADMIN_KEY.equals(key.getText().toString())) showAdmin();
-            else toast("رمز المدير غير صحيح");
+            String e=email.getText().toString().trim();
+            String p=password.getText().toString();
+            if(e.isEmpty() || p.isEmpty()){ toast("أدخل البريد وكلمة المرور"); return; }
+            enter.setEnabled(false);
+            auth.signInWithEmailAndPassword(e,p).addOnCompleteListener(task -> {
+                if(!task.isSuccessful()){
+                    enter.setEnabled(true);
+                    toast("تعذر تسجيل دخول المدير");
+                    return;
+                }
+                FirebaseUser user=auth.getCurrentUser();
+                if(user==null){ enter.setEnabled(true); auth.signOut(); toast("تعذر التحقق من المدير"); return; }
+                db.collection("admins").document(user.getUid()).get()
+                    .addOnSuccessListener(doc -> {
+                        if(doc.exists() && "admin".equals(doc.getString("role"))) showAdmin();
+                        else { auth.signOut(); enter.setEnabled(true); toast("هذا الحساب ليس لديه صلاحية المدير"); }
+                    })
+                    .addOnFailureListener(err -> {
+                        auth.signOut(); enter.setEnabled(true);
+                        toast("تعذر التحقق من صلاحية المدير في Firestore");
+                    });
+            });
         });
         Button back=button("رجوع"); back.setOnClickListener(v -> showLogin());
     }
