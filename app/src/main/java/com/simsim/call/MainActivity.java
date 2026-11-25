@@ -45,6 +45,7 @@ public class MainActivity extends Activity {
     private LinearLayout contactsList;
     private EditText contactsSearch;
     private String myDisplayName = "عضو سمسم";
+    private boolean profileReady = false;
     private final Runnable presenceBeat = new Runnable() {
         @Override public void run() {
             updatePresence(true);
@@ -244,9 +245,20 @@ public class MainActivity extends Activity {
                 if(saved!=null && !saved.trim().isEmpty()) {
                     myDisplayName=saved;
                     nameField.setText(saved);
+                    profileReady=true;
+                    startPresence();
                 } else {
                     String fallback="عضو "+u.getUid().substring(0,Math.min(5,u.getUid().length()));
                     nameField.setText(fallback);
+                    Map<String,Object> initial=new HashMap<>();
+                    initial.put("uid",u.getUid());
+                    initial.put("displayName",fallback);
+                    initial.put("online",true);
+                    initial.put("lastActive",FieldValue.serverTimestamp());
+                    initial.put("createdAt",FieldValue.serverTimestamp());
+                    db.collection("publicProfiles").document(u.getUid()).set(initial,SetOptions.merge())
+                        .addOnSuccessListener(x -> { myDisplayName=fallback; profileReady=true; startPresence(); })
+                        .addOnFailureListener(e -> toast("تعذر إنشاء ملفك الظاهر. انشر قواعد Firestore الجديدة"));
                 }
             });
         Button saveName=button("حفظ الاسم");
@@ -261,7 +273,7 @@ public class MainActivity extends Activity {
             profile.put("lastActive",FieldValue.serverTimestamp());
             profile.put("createdAt",FieldValue.serverTimestamp());
             db.collection("publicProfiles").document(u.getUid()).set(profile,SetOptions.merge())
-                .addOnSuccessListener(x -> {myDisplayName=value;saveName.setEnabled(true);toast("تم حفظ اسمك");updatePresence(true);})
+                 .addOnSuccessListener(x -> {myDisplayName=value;profileReady=true;saveName.setEnabled(true);toast("تم حفظ اسمك");startPresence();})
                 .addOnFailureListener(err -> {saveName.setEnabled(true);toast("تعذر حفظ الاسم. انشر قواعد publicProfiles أولاً");});
         });
         Button contacts=button("♙  الأعضاء وجهات الاتصال");
@@ -271,20 +283,8 @@ public class MainActivity extends Activity {
         Button messages=button("▤  المحادثات");
         messages.setOnClickListener(v -> toast("قسم الرسائل لم يكتمل ربطه بعد"));
         Button logout=button("تسجيل الخروج");
-        logout.setOnClickListener(v -> { updatePresence(false); auth.signOut(); showLogin(); });
-        db.collection("publicProfiles").document(u.getUid()).get()
-            .addOnSuccessListener(doc -> {
-                if(!doc.exists()) {
-                    Map<String,Object> p=new HashMap<>();
-                    p.put("uid",u.getUid());
-                    p.put("displayName","عضو "+u.getUid().substring(0,Math.min(5,u.getUid().length())));
-                    p.put("online",true);
-                    p.put("lastActive",FieldValue.serverTimestamp());
-                    p.put("createdAt",FieldValue.serverTimestamp());
-                    db.collection("publicProfiles").document(u.getUid()).set(p,SetOptions.merge());
-                }
-            });
-        startPresence();
+        logout.setOnClickListener(v -> { updatePresence(false); profileReady=false; auth.signOut(); showLogin(); });
+        // Profile creation and presence start after the profile document is confirmed.
     }
 
     private void startPresence() {
@@ -295,7 +295,7 @@ public class MainActivity extends Activity {
 
     private void updatePresence(boolean online) {
         FirebaseUser u=auth.getCurrentUser();
-        if(u==null) return;
+        if(u==null || !profileReady) return;
         Map<String,Object> state=new HashMap<>();
         state.put("uid",u.getUid());
         state.put("online",online);
@@ -344,7 +344,8 @@ public class MainActivity extends Activity {
             if(me!=null && doc.getId().equals(me.getUid())) continue;
             String name=doc.getString("displayName");
             if(name==null || name.trim().isEmpty()) name="عضو سمسم";
-            if(!filter.isEmpty() && !name.toLowerCase().contains(filter)) continue;
+            final String shownName=name;
+            if(!filter.isEmpty() && !shownName.toLowerCase().contains(filter)) continue;
             boolean online=Boolean.TRUE.equals(doc.getBoolean("online"));
             com.google.firebase.Timestamp last=doc.getTimestamp("lastActive");
             if(last==null || System.currentTimeMillis()-last.toDate().getTime()>90000L) online=false;
@@ -353,7 +354,7 @@ public class MainActivity extends Activity {
             card.setPadding(dp(16),dp(12),dp(16),dp(12));
             card.setBackground(shape(PANEL,BLUE));
             TextView title=new TextView(this);
-            title.setText("◉  "+name);
+            title.setText("◉  "+shownName);
             title.setTextColor(WHITE); title.setTextSize(18); title.setTypeface(null,Typeface.BOLD);
             TextView status=new TextView(this);
             status.setText(online?"● متصل الآن":"○ غير متصل");
@@ -363,7 +364,7 @@ public class MainActivity extends Activity {
             lp.setMargins(0,dp(6),0,dp(6));
             contactsList.addView(card,lp);
             card.setOnClickListener(v -> new AlertDialog.Builder(this)
-                .setTitle(name)
+                .setTitle(shownName)
                 .setMessage(online?"متصل الآن":"غير متصل")
                 .setPositiveButton("حسناً",(d,w)->{})
                 .show());
@@ -380,13 +381,13 @@ public class MainActivity extends Activity {
 
     @Override protected void onResume() {
         super.onResume();
-        if(auth!=null && auth.getCurrentUser()!=null) startPresence();
+        if(auth!=null && auth.getCurrentUser()!=null && profileReady) startPresence();
     }
 
     @Override protected void onPause() {
         super.onPause();
         presenceHandler.removeCallbacks(presenceBeat);
-        if(auth!=null && auth.getCurrentUser()!=null) updatePresence(false);
+        if(auth!=null && auth.getCurrentUser()!=null && profileReady) updatePresence(false);
     }
 
     @Override protected void onDestroy() {
