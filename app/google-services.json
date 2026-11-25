@@ -1,21 +1,21 @@
 {
   "project_info": {
-    "project_number": "163961095630",
-    "project_id": "r-m-call",
-    "storage_bucket": "r-m-call.firebasestorage.app"
+    "project_number": "884170869988",
+    "project_id": "simsim-call-52f31",
+    "storage_bucket": "simsim-call-52f31.firebasestorage.app"
   },
   "client": [
     {
       "client_info": {
-        "mobilesdk_app_id": "1:163961095630:android:1d4da29c1bab70a7f6979f",
+        "mobilesdk_app_id": "1:884170869988:android:5ea5508bd98f7ce461b0f1",
         "android_client_info": {
-          "package_name": "com.rm.call"
+          "package_name": "com.simsim.call"
         }
       },
       "oauth_client": [],
       "api_key": [
         {
-          "current_key": "AIzaSyCRmGZtzxI9blLOkH0GOSPzAJ_VNrc4cnY"
+          "current_key": "AIzaSyBDx7Ttsw1SAH67NyboxeaMewpU46dEidI"
         }
       ],
       "services": {
