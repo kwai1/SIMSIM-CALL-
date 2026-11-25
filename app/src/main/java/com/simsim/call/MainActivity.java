@@ -11,6 +11,8 @@ import android.content.ClipData;
 import android.view.Gravity;
 import android.view.View;
 import android.text.InputType;
+import android.text.Editable;
+import android.text.TextWatcher;
 import android.widget.*;
 import java.security.SecureRandom;
 import java.util.HashMap;
@@ -44,6 +46,7 @@ public class MainActivity extends Activity {
     private ListenerRegistration contactsListener;
     private LinearLayout contactsList;
     private EditText contactsSearch;
+    private com.google.firebase.firestore.QuerySnapshot lastContacts;
     private String myDisplayName = "عضو سمسم";
     private boolean profileReady = false;
     private final Runnable presenceBeat = new Runnable() {
@@ -310,6 +313,13 @@ public class MainActivity extends Activity {
         text("دليل أعضاء سمسم",22,WHITE,true);
         text("اختر عضواً لعرض حالته وملفه",13,GRAY,false);
         contactsSearch=input("ابحث بالاسم...",InputType.TYPE_CLASS_TEXT);
+        contactsSearch.addTextChangedListener(new TextWatcher() {
+            @Override public void beforeTextChanged(CharSequence s,int start,int count,int after) {}
+            @Override public void onTextChanged(CharSequence s,int start,int before,int count) {
+                if(lastContacts!=null) renderContacts(lastContacts);
+            }
+            @Override public void afterTextChanged(Editable e) {}
+        });
         contactsList=new LinearLayout(this);
         contactsList.setOrientation(LinearLayout.VERTICAL);
         root.addView(contactsList,new LinearLayout.LayoutParams(-1,-2));
@@ -336,6 +346,7 @@ public class MainActivity extends Activity {
 
     private void renderContacts(com.google.firebase.firestore.QuerySnapshot snap) {
         if(contactsList==null || snap==null) return;
+        lastContacts=snap;
         contactsList.removeAllViews();
         String filter=contactsSearch==null?"":contactsSearch.getText().toString().trim().toLowerCase();
         int count=0;
