@@ -288,7 +288,7 @@ public class MainActivity extends Activity {
         Button calls=button("◉  الاتصالات");
         calls.setOnClickListener(v -> toast("قسم الاتصال الصوتي ما زال يحتاج ربط LiveKit"));
         Button messages=button("▤  المحادثات");
-        messages.setOnClickListener(v -> toast("قسم الرسائل لم يكتمل ربطه بعد"));
+        messages.setOnClickListener(v -> showContacts());
         Button logout=button("تسجيل الخروج");
         logout.setOnClickListener(v -> { updatePresence(false); profileReady=false; auth.signOut(); showLogin(); });
         // Profile creation and presence start after the profile document is confirmed.
