@@ -21,6 +21,12 @@ import com.google.firebase.auth.FirebaseUser;
 import com.google.firebase.firestore.FirebaseFirestore;
 import com.google.firebase.firestore.DocumentReference;
 import com.google.firebase.firestore.FieldValue;
+import com.google.firebase.firestore.SetOptions;
+import com.google.firebase.firestore.ListenerRegistration;
+import com.google.firebase.firestore.QueryDocumentSnapshot;
+import android.os.Handler;
+import android.os.Looper;
+import android.app.AlertDialog;
 import com.google.firebase.firestore.FirebaseFirestoreException;
 import com.google.android.gms.tasks.Task;
 
@@ -34,6 +40,17 @@ public class MainActivity extends Activity {
     private FirebaseAuth auth;
     private FirebaseFirestore db;
     private final String ADMIN_KEY = "SIMSIM-ADMIN-2026";
+    private final Handler presenceHandler = new Handler(Looper.getMainLooper());
+    private ListenerRegistration contactsListener;
+    private LinearLayout contactsList;
+    private EditText contactsSearch;
+    private String myDisplayName = "عضو سمسم";
+    private final Runnable presenceBeat = new Runnable() {
+        @Override public void run() {
+            updatePresence(true);
+            presenceHandler.postDelayed(this, 30000);
+        }
+    };
 
     @Override protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -215,15 +232,166 @@ public class MainActivity extends Activity {
 
     private void showDashboard() {
         setup(); header(); text("ACCESS GRANTED",20,BLUE,true);
-        text("مرحباً بك في الشبكة الخاصة",19,WHITE,true);
+        text("مرحباً بك في شبكة سمسم",19,WHITE,true);
         FirebaseUser u=auth.getCurrentUser();
-        if(u!=null) text(u.getEmail()==null?"مستخدم سمسم":u.getEmail(),13,GRAY,false);
+        if(u==null){ showLogin(); return; }
+        if(u.getEmail()!=null) text(u.getEmail(),13,GRAY,false);
+        text("اسمك الظاهر للأعضاء",15,BLUE,true);
+        final EditText nameField=input("اكتب الاسم الذي سيظهر للآخرين",InputType.TYPE_CLASS_TEXT|InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);
+        db.collection("publicProfiles").document(u.getUid()).get()
+            .addOnSuccessListener(doc -> {
+                String saved=doc.getString("displayName");
+                if(saved!=null && !saved.trim().isEmpty()) {
+                    myDisplayName=saved;
+                    nameField.setText(saved);
+                } else {
+                    String fallback="عضو "+u.getUid().substring(0,Math.min(5,u.getUid().length()));
+                    nameField.setText(fallback);
+                }
+            });
+        Button saveName=button("حفظ الاسم");
+        saveName.setOnClickListener(v -> {
+            String value=nameField.getText().toString().trim();
+            if(value.length()<2 || value.length()>30){toast("الاسم يجب أن يكون بين حرفين و30 حرفاً");return;}
+            saveName.setEnabled(false);
+            Map<String,Object> profile=new HashMap<>();
+            profile.put("uid",u.getUid());
+            profile.put("displayName",value);
+            profile.put("online",true);
+            profile.put("lastActive",FieldValue.serverTimestamp());
+            profile.put("createdAt",FieldValue.serverTimestamp());
+            db.collection("publicProfiles").document(u.getUid()).set(profile,SetOptions.merge())
+                .addOnSuccessListener(x -> {myDisplayName=value;saveName.setEnabled(true);toast("تم حفظ اسمك");updatePresence(true);})
+                .addOnFailureListener(err -> {saveName.setEnabled(true);toast("تعذر حفظ الاسم. انشر قواعد publicProfiles أولاً");});
+        });
+        Button contacts=button("♙  الأعضاء وجهات الاتصال");
+        contacts.setOnClickListener(v -> showContacts());
         Button calls=button("◉  الاتصالات");
-        calls.setOnClickListener(v -> toast("واجهة المكالمات قيد الربط"));
+        calls.setOnClickListener(v -> toast("قسم الاتصال الصوتي ما زال يحتاج ربط LiveKit"));
         Button messages=button("▤  المحادثات");
-        messages.setOnClickListener(v -> toast("واجهة المحادثات قيد الربط"));
+        messages.setOnClickListener(v -> toast("قسم الرسائل لم يكتمل ربطه بعد"));
         Button logout=button("تسجيل الخروج");
-        logout.setOnClickListener(v -> auth.signOut());
-        logout.setOnClickListener(v -> { auth.signOut(); showLogin(); });
+        logout.setOnClickListener(v -> { updatePresence(false); auth.signOut(); showLogin(); });
+        db.collection("publicProfiles").document(u.getUid()).get()
+            .addOnSuccessListener(doc -> {
+                if(!doc.exists()) {
+                    Map<String,Object> p=new HashMap<>();
+                    p.put("uid",u.getUid());
+                    p.put("displayName","عضو "+u.getUid().substring(0,Math.min(5,u.getUid().length())));
+                    p.put("online",true);
+                    p.put("lastActive",FieldValue.serverTimestamp());
+                    p.put("createdAt",FieldValue.serverTimestamp());
+                    db.collection("publicProfiles").document(u.getUid()).set(p,SetOptions.merge());
+                }
+            });
+        startPresence();
+    }
+
+    private void startPresence() {
+        presenceHandler.removeCallbacks(presenceBeat);
+        updatePresence(true);
+        presenceHandler.postDelayed(presenceBeat,30000);
+    }
+
+    private void updatePresence(boolean online) {
+        FirebaseUser u=auth.getCurrentUser();
+        if(u==null) return;
+        Map<String,Object> state=new HashMap<>();
+        state.put("uid",u.getUid());
+        state.put("online",online);
+        state.put("lastActive",FieldValue.serverTimestamp());
+        db.collection("publicProfiles").document(u.getUid()).set(state,SetOptions.merge());
+    }
+
+    private void showContacts() {
+        FirebaseUser current=auth.getCurrentUser();
+        if(current==null){showLogin();return;}
+        setup(); header();
+        text("دليل أعضاء سمسم",22,WHITE,true);
+        text("اختر عضواً لعرض حالته وملفه",13,GRAY,false);
+        contactsSearch=input("ابحث بالاسم...",InputType.TYPE_CLASS_TEXT);
+        contactsList=new LinearLayout(this);
+        contactsList.setOrientation(LinearLayout.VERTICAL);
+        root.addView(contactsList,new LinearLayout.LayoutParams(-1,-2));
+        Button refresh=button("تحديث القائمة");
+        refresh.setOnClickListener(v -> loadContactsOnce());
+        Button back=button("رجوع");
+        back.setOnClickListener(v -> showDashboard());
+        attachContactsListener();
+    }
+
+    private void attachContactsListener() {
+        if(contactsListener!=null) contactsListener.remove();
+        contactsListener=db.collection("publicProfiles").addSnapshotListener((snap,error) -> {
+            if(error!=null){toast("تعذر تحميل الأعضاء. تحقق من قواعد Firestore");return;}
+            renderContacts(snap);
+        });
+    }
+
+    private void loadContactsOnce() {
+        db.collection("publicProfiles").get()
+            .addOnSuccessListener(this::renderContacts)
+            .addOnFailureListener(e -> toast("تعذر تحديث قائمة الأعضاء"));
+    }
+
+    private void renderContacts(com.google.firebase.firestore.QuerySnapshot snap) {
+        if(contactsList==null || snap==null) return;
+        contactsList.removeAllViews();
+        String filter=contactsSearch==null?"":contactsSearch.getText().toString().trim().toLowerCase();
+        int count=0;
+        for(QueryDocumentSnapshot doc:snap) {
+            FirebaseUser me=auth.getCurrentUser();
+            if(me!=null && doc.getId().equals(me.getUid())) continue;
+            String name=doc.getString("displayName");
+            if(name==null || name.trim().isEmpty()) name="عضو سمسم";
+            if(!filter.isEmpty() && !name.toLowerCase().contains(filter)) continue;
+            boolean online=Boolean.TRUE.equals(doc.getBoolean("online"));
+            com.google.firebase.Timestamp last=doc.getTimestamp("lastActive");
+            if(last==null || System.currentTimeMillis()-last.toDate().getTime()>90000L) online=false;
+            LinearLayout card=new LinearLayout(this);
+            card.setOrientation(LinearLayout.VERTICAL);
+            card.setPadding(dp(16),dp(12),dp(16),dp(12));
+            card.setBackground(shape(PANEL,BLUE));
+            TextView title=new TextView(this);
+            title.setText("◉  "+name);
+            title.setTextColor(WHITE); title.setTextSize(18); title.setTypeface(null,Typeface.BOLD);
+            TextView status=new TextView(this);
+            status.setText(online?"● متصل الآن":"○ غير متصل");
+            status.setTextColor(online?Color.rgb(40,220,160):GRAY); status.setTextSize(13);
+            card.addView(title); card.addView(status);
+            LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(-1,-2);
+            lp.setMargins(0,dp(6),0,dp(6));
+            contactsList.addView(card,lp);
+            card.setOnClickListener(v -> new AlertDialog.Builder(this)
+                .setTitle(name)
+                .setMessage(online?"متصل الآن":"غير متصل")
+                .setPositiveButton("حسناً",(d,w)->{})
+                .show());
+            count++;
+        }
+        if(count==0) {
+            TextView empty=new TextView(this);
+            empty.setText("لا يوجد أعضاء آخرون بعد. اطلب من أصدقائك التسجيل برمز دعوة.");
+            empty.setTextColor(GRAY); empty.setTextSize(15); empty.setGravity(Gravity.CENTER);
+            empty.setPadding(dp(12),dp(24),dp(12),dp(24));
+            contactsList.addView(empty);
+        }
+    }
+
+    @Override protected void onResume() {
+        super.onResume();
+        if(auth!=null && auth.getCurrentUser()!=null) startPresence();
+    }
+
+    @Override protected void onPause() {
+        super.onPause();
+        presenceHandler.removeCallbacks(presenceBeat);
+        if(auth!=null && auth.getCurrentUser()!=null) updatePresence(false);
+    }
+
+    @Override protected void onDestroy() {
+        super.onDestroy();
+        presenceHandler.removeCallbacks(presenceBeat);
+        if(contactsListener!=null) contactsListener.remove();
     }
 }
