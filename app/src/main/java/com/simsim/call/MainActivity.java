@@ -360,6 +360,7 @@ public class MainActivity extends Activity {
             boolean online=Boolean.TRUE.equals(doc.getBoolean("online"));
             com.google.firebase.Timestamp last=doc.getTimestamp("lastActive");
             if(last==null || System.currentTimeMillis()-last.toDate().getTime()>90000L) online=false;
+            final boolean onlineStatus=online;
             LinearLayout card=new LinearLayout(this);
             card.setOrientation(LinearLayout.VERTICAL);
             card.setPadding(dp(16),dp(12),dp(16),dp(12));
@@ -368,15 +369,15 @@ public class MainActivity extends Activity {
             title.setText("◉  "+shownName);
             title.setTextColor(WHITE); title.setTextSize(18); title.setTypeface(null,Typeface.BOLD);
             TextView status=new TextView(this);
-            status.setText(online?"● متصل الآن":"○ غير متصل");
-            status.setTextColor(online?Color.rgb(40,220,160):GRAY); status.setTextSize(13);
+            status.setText(onlineStatus?"● متصل الآن":"○ غير متصل");
+            status.setTextColor(onlineStatus?Color.rgb(40,220,160):GRAY); status.setTextSize(13);
             card.addView(title); card.addView(status);
             LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(-1,-2);
             lp.setMargins(0,dp(6),0,dp(6));
             contactsList.addView(card,lp);
             card.setOnClickListener(v -> new AlertDialog.Builder(this)
                 .setTitle(shownName)
-                .setMessage(online?"متصل الآن":"غير متصل")
+                .setMessage(onlineStatus?"متصل الآن":"غير متصل")
                 .setPositiveButton("حسناً",(d,w)->{})
                 .show());
             count++;
