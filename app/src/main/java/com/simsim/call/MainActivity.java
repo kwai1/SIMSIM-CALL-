@@ -14,6 +14,7 @@ import android.text.InputType;
 import android.text.Editable;
 import android.text.TextWatcher;
 import android.widget.*;
+import android.view.inputmethod.InputMethodManager;
 import java.security.SecureRandom;
 import java.util.HashMap;
 import java.util.Map;
@@ -49,6 +50,9 @@ public class MainActivity extends Activity {
     private com.google.firebase.firestore.QuerySnapshot lastContacts;
     private String myDisplayName = "عضو سمسم";
     private boolean profileReady = false;
+    private ListenerRegistration messagesListener;
+    private LinearLayout messagesContainer;
+    private String activeChatId;
     private final Runnable presenceBeat = new Runnable() {
         @Override public void run() {
             updatePresence(true);
@@ -375,11 +379,8 @@ public class MainActivity extends Activity {
             LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(-1,-2);
             lp.setMargins(0,dp(6),0,dp(6));
             contactsList.addView(card,lp);
-            card.setOnClickListener(v -> new AlertDialog.Builder(this)
-                .setTitle(shownName)
-                .setMessage(onlineStatus?"متصل الآن":"غير متصل")
-                .setPositiveButton("حسناً",(d,w)->{})
-                .show());
+            final String targetUid=doc.getId();
+            card.setOnClickListener(v -> openChat(targetUid,shownName));
             count++;
         }
         if(count==0) {
@@ -389,6 +390,89 @@ public class MainActivity extends Activity {
             empty.setPadding(dp(12),dp(24),dp(12),dp(24));
             contactsList.addView(empty);
         }
+    }
+
+    private String chatIdFor(String a,String b) {
+        return a.compareTo(b)<0 ? a+"_"+b : b+"_"+a;
+    }
+
+    private void openChat(String otherUid,String otherName) {
+        FirebaseUser me=auth.getCurrentUser();
+        if(me==null) { showLogin(); return; }
+        activeChatId=chatIdFor(me.getUid(),otherUid);
+        Map<String,Object> chat=new HashMap<>();
+        java.util.List<String> members=new java.util.ArrayList<>();
+        members.add(me.getUid()); members.add(otherUid);
+        chat.put("memberIds",members);
+        chat.put("createdAt",FieldValue.serverTimestamp());
+        db.collection("chats").document(activeChatId).set(chat,SetOptions.merge())
+            .addOnSuccessListener(x -> showChatScreen(otherName))
+            .addOnFailureListener(e -> toast("تعذر فتح المحادثة. تحقق من قواعد chats"));
+    }
+
+    private void showChatScreen(String otherName) {
+        setup(); header();
+        text("محادثة مع "+otherName,20,WHITE,true);
+        ScrollView scroll=new ScrollView(this);
+        messagesContainer=new LinearLayout(this);
+        messagesContainer.setOrientation(LinearLayout.VERTICAL);
+        messagesContainer.setPadding(dp(4),dp(8),dp(4),dp(8));
+        scroll.addView(messagesContainer);
+        root.addView(scroll,new LinearLayout.LayoutParams(-1,0,1));
+        LinearLayout compose=new LinearLayout(this);
+        compose.setOrientation(LinearLayout.HORIZONTAL);
+        EditText message=new EditText(this);
+        message.setHint("اكتب رسالتك...");
+        message.setTextColor(WHITE); message.setHintTextColor(GRAY);
+        message.setSingleLine(false); message.setMinHeight(dp(48));
+        message.setBackground(shape(PANEL,BLUE));
+        compose.addView(message,new LinearLayout.LayoutParams(0,-2,1));
+        Button send=new Button(this); send.setText("إرسال"); send.setAllCaps(false);
+        compose.addView(send,new LinearLayout.LayoutParams(dp(82),dp(52)));
+        root.addView(compose,new LinearLayout.LayoutParams(-1,-2));
+        send.setOnClickListener(v -> {
+            String body=message.getText().toString().trim();
+            FirebaseUser me=auth.getCurrentUser();
+            if(body.isEmpty() || me==null) return;
+            if(body.length()>4000){toast("الرسالة طويلة جداً");return;}
+            send.setEnabled(false);
+            Map<String,Object> data=new HashMap<>();
+            data.put("senderId",me.getUid());
+            data.put("text",body);
+            data.put("createdAt",FieldValue.serverTimestamp());
+            db.collection("chats").document(activeChatId).collection("messages").add(data)
+                .addOnSuccessListener(x -> {
+                    Map<String,Object> update=new HashMap<>();
+                    update.put("lastMessage",body);
+                    update.put("lastMessageAt",FieldValue.serverTimestamp());
+                    db.collection("chats").document(activeChatId).set(update,SetOptions.merge());
+                    message.setText(""); send.setEnabled(true);
+                })
+                .addOnFailureListener(e -> {send.setEnabled(true);toast("تعذر إرسال الرسالة");});
+        });
+        Button back=button("رجوع إلى الأعضاء");
+        back.setOnClickListener(v -> { if(messagesListener!=null) messagesListener.remove(); showContacts(); });
+        if(messagesListener!=null) messagesListener.remove();
+        messagesListener=db.collection("chats").document(activeChatId).collection("messages")
+            .orderBy("createdAt")
+            .addSnapshotListener((snap,error) -> {
+                if(error!=null){toast("تعذر تحميل الرسائل");return;}
+                messagesContainer.removeAllViews();
+                if(snap==null) return;
+                for(com.google.firebase.firestore.QueryDocumentSnapshot item:snap) {
+                    String sender=item.getString("senderId");
+                    String body=item.getString("text");
+                    TextView line=new TextView(this);
+                    line.setText((auth.getCurrentUser()!=null && auth.getCurrentUser().getUid().equals(sender)?"أنت: ":"العضو: ")+(body==null?"":body));
+                    line.setTextColor(WHITE); line.setTextSize(16);
+                    line.setPadding(dp(12),dp(10),dp(12),dp(10));
+                    line.setBackground(shape(PANEL,BLUE));
+                    LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(-1,-2);
+                    lp.setMargins(0,dp(4),0,dp(4));
+                    messagesContainer.addView(line,lp);
+                }
+                scroll.post(() -> scroll.fullScroll(View.FOCUS_DOWN));
+            });
     }
 
     @Override protected void onResume() {
