@@ -9,6 +9,7 @@
   },
   "dependencies": {
     "express": "^4.21.2",
+    "cors": "^2.8.5",
     "livekit-server-sdk": "^2.15.0"
   }
 }
