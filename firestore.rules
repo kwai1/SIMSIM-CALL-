@@ -48,6 +48,19 @@ service cloud.firestore {
       allow delete: if false;
     }
 
+    match /publicProfiles/{uid} {
+      allow get, list: if signedIn();
+      allow create, update: if signedIn()
+        && request.auth.uid == uid
+        && request.resource.data.uid == uid
+        && request.resource.data.keys().hasOnly(['uid', 'displayName', 'online', 'lastActive', 'createdAt'])
+        && request.resource.data.displayName is string
+        && request.resource.data.displayName.size() >= 2
+        && request.resource.data.displayName.size() <= 30
+        && request.resource.data.online is bool;
+      allow delete: if false;
+    }
+
     match /calls/{callId} {
       allow read, write: if false;
     }
