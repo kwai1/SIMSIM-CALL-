@@ -180,6 +180,9 @@ service cloud.firestore {
         && request.resource.data.callKeyWrappedKeys.keys().hasAll([
           request.resource.data.callerUid, request.resource.data.calleeUid
         ])
+        && request.resource.data.callKeyWrappedKeys.keys().hasOnly([
+          request.resource.data.callerUid, request.resource.data.calleeUid
+        ])
         && request.resource.data.encryptionVersion == 1;
 
       allow update: if isActiveUser(request.auth.uid)
