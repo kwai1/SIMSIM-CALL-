@@ -236,9 +236,14 @@ public class MainActivity extends Activity {
             String code=createCode();
             Map<String,Object> data=new HashMap<>();
             data.put("status","نشط"); data.put("createdAt",FieldValue.serverTimestamp());
-            db.collection("invitations").document(code).create(data)
-                .addOnSuccessListener(x -> showGeneratedCode(code))
-                .addOnFailureListener(err -> toast("تعذر إنشاء الدعوة. تحقق من قواعد Firestore"));
+            DocumentReference inviteRef=db.collection("invitations").document(code);
+            db.runTransaction(transaction -> {
+                com.google.firebase.firestore.DocumentSnapshot existing=transaction.get(inviteRef);
+                if(existing.exists()) throw new IllegalStateException("INVITATION_CODE_COLLISION");
+                transaction.set(inviteRef,data);
+                return null;
+            }).addOnSuccessListener(x -> showGeneratedCode(code))
+              .addOnFailureListener(err -> toast("تعذر إنشاء الدعوة. حاول مرة أخرى أو تحقق من صلاحية المدير."));
         });
         Button useApp=button("الدخول إلى التطبيق كمدير");
         useApp.setOnClickListener(v -> showDashboard());
