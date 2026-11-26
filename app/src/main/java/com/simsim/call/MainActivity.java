@@ -404,64 +404,6 @@ public class MainActivity extends Activity {
         back.setOnClickListener(v -> showDashboard());
     }
 
-    private void attachContactsListener() {
-        if(contactsListener!=null) contactsListener.remove();
-        contactsListener=db.collection("publicProfiles").addSnapshotListener((snap,error) -> {
-            if(error!=null){toast("تعذر تحميل الأعضاء. تحقق من قواعد Firestore");return;}
-            renderContacts(snap);
-        });
-    }
-
-    private void loadContactsOnce() {
-        db.collection("publicProfiles").get()
-            .addOnSuccessListener(this::renderContacts)
-            .addOnFailureListener(e -> toast("تعذر تحديث قائمة الأعضاء"));
-    }
-
-    private void renderContacts(com.google.firebase.firestore.QuerySnapshot snap) {
-        if(contactsList==null || snap==null) return;
-        lastContacts=snap;
-        contactsList.removeAllViews();
-        String filter=contactsSearch==null?"":contactsSearch.getText().toString().trim().toLowerCase();
-        int count=0;
-        for(QueryDocumentSnapshot doc:snap) {
-            FirebaseUser me=auth.getCurrentUser();
-            if(me!=null && doc.getId().equals(me.getUid())) continue;
-            String name=doc.getString("displayName");
-            if(name==null || name.trim().isEmpty()) name="عضو سمسم";
-            final String shownName=name;
-            if(!filter.isEmpty() && !shownName.toLowerCase().contains(filter)) continue;
-            boolean online=Boolean.TRUE.equals(doc.getBoolean("online"));
-            com.google.firebase.Timestamp last=doc.getTimestamp("lastActive");
-            if(last==null || System.currentTimeMillis()-last.toDate().getTime()>90000L) online=false;
-            final boolean onlineStatus=online;
-            LinearLayout card=new LinearLayout(this);
-            card.setOrientation(LinearLayout.VERTICAL);
-            card.setPadding(dp(16),dp(12),dp(16),dp(12));
-            card.setBackground(shape(PANEL,BLUE));
-            TextView title=new TextView(this);
-            title.setText("◉  "+shownName);
-            title.setTextColor(WHITE); title.setTextSize(18); title.setTypeface(null,Typeface.BOLD);
-            TextView status=new TextView(this);
-            status.setText(onlineStatus?"● متصل الآن":"○ غير متصل");
-            status.setTextColor(onlineStatus?Color.rgb(40,220,160):GRAY); status.setTextSize(13);
-            card.addView(title); card.addView(status);
-            LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(-1,-2);
-            lp.setMargins(0,dp(6),0,dp(6));
-            contactsList.addView(card,lp);
-            final String targetUid=doc.getId();
-            card.setOnClickListener(v -> openChat(targetUid,shownName));
-            count++;
-        }
-        if(count==0) {
-            TextView empty=new TextView(this);
-            empty.setText("لا يوجد أعضاء آخرون بعد. اطلب من أصدقائك التسجيل برمز دعوة.");
-            empty.setTextColor(GRAY); empty.setTextSize(15); empty.setGravity(Gravity.CENTER);
-            empty.setPadding(dp(12),dp(24),dp(12),dp(24));
-            contactsList.addView(empty);
-        }
-    }
-
     private String chatIdFor(String a,String b) {
         return a.compareTo(b)<0 ? a+"_"+b : b+"_"+a;
     }
