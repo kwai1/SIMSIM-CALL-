@@ -492,6 +492,10 @@ public class MainActivity extends Activity {
         setup(); header();
         text("محادثة مشفرة مع "+otherName,20,WHITE,true);
         text("تشفير طرف إلى طرف • لا يُحفظ النص مكشوفاً",11,BLUE,true);
+        try {
+            text("بصمة مفتاح الطرف (قارنها معه خارج التطبيق):",10,GRAY,false);
+            text(CryptoManager.fingerprint(activeOtherPublicKey),10,BLUE,true);
+        } catch(Exception ignored) { }
         Button callButton=button("اتصال صوتي مشفّر");
         callButton.setOnClickListener(v -> startOutgoingCall());
         ScrollView scroll=new ScrollView(this);
