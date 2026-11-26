@@ -74,7 +74,10 @@ app.post("/token", tokenLimiter, async (req, res) => {
     }
 
     const userSnapshot = await firestore.collection("users").doc(uid).get();
-    if (!userSnapshot.exists || userSnapshot.get("status") !== "active") {
+    const adminSnapshot = await firestore.collection("admins").doc(uid).get();
+    const isActiveMember = userSnapshot.exists && userSnapshot.get("status") === "active";
+    const isAdministrator = adminSnapshot.exists && adminSnapshot.get("role") === "admin";
+    if (!isActiveMember && !isAdministrator) {
       return res.status(403).json({ error: "Account is not authorized" });
     }
 
@@ -91,7 +94,10 @@ app.post("/token", tokenLimiter, async (req, res) => {
 
     const otherUid = call.callerUid === uid ? call.calleeUid : call.callerUid;
     const otherUserSnapshot = await firestore.collection("users").doc(otherUid).get();
-    if (!otherUserSnapshot.exists || otherUserSnapshot.get("status") !== "active") {
+    const otherAdminSnapshot = await firestore.collection("admins").doc(otherUid).get();
+    const otherIsActive = otherUserSnapshot.exists && otherUserSnapshot.get("status") === "active";
+    const otherIsAdmin = otherAdminSnapshot.exists && otherAdminSnapshot.get("role") === "admin";
+    if (!otherIsActive && !otherIsAdmin) {
       return res.status(403).json({ error: "The other participant is not authorized" });
     }
 
