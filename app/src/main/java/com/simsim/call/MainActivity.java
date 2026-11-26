@@ -21,6 +21,7 @@ import java.util.Map;
 
 import com.google.firebase.auth.FirebaseAuth;
 import com.google.firebase.auth.FirebaseUser;
+import com.google.firebase.auth.FirebaseAuthException;
 import com.google.firebase.firestore.FirebaseFirestore;
 import com.google.firebase.firestore.DocumentReference;
 import com.google.firebase.firestore.FieldValue;
@@ -128,6 +129,29 @@ public class MainActivity extends Activity {
     }
     private void toast(String s) { Toast.makeText(this,s,Toast.LENGTH_LONG).show(); }
 
+    private String authErrorMessage(Exception error) {
+        if (error instanceof FirebaseAuthException) {
+            String code = ((FirebaseAuthException) error).getErrorCode();
+            if ("ERROR_EMAIL_ALREADY_IN_USE".equals(code) || "ERROR_EMAIL_ALREADY_EXISTS".equals(code))
+                return "هذا البريد مسجل مسبقاً. ارجع وسجّل الدخول بدلاً من إنشاء حساب جديد.";
+            if ("ERROR_INVALID_EMAIL".equals(code)) return "صيغة البريد الإلكتروني غير صحيحة.";
+            if ("ERROR_WEAK_PASSWORD".equals(code) || "ERROR_PASSWORD_DOES_NOT_MEET_REQUIREMENTS".equals(code))
+                return "كلمة المرور ضعيفة. استخدم 6 أحرف على الأقل.";
+            if ("ERROR_OPERATION_NOT_ALLOWED".equals(code))
+                return "تسجيل البريد وكلمة المرور غير مفعّل في Firebase Authentication.";
+            if ("ERROR_TOO_MANY_REQUESTS".equals(code))
+                return "محاولات كثيرة. انتظر قليلاً ثم أعد المحاولة.";
+            if ("ERROR_NETWORK_REQUEST_FAILED".equals(code))
+                return "تعذر الاتصال. تحقق من الإنترنت وحاول مجدداً.";
+            if ("ERROR_USER_NOT_FOUND".equals(code) || "ERROR_INVALID_CREDENTIAL".equals(code))
+                return "البريد أو كلمة المرور غير صحيحة.";
+            if ("ERROR_WRONG_PASSWORD".equals(code)) return "كلمة المرور غير صحيحة.";
+            return "خطأ Firebase: " + code;
+        }
+        String message = error == null ? "" : error.getMessage();
+        return "تعذر إكمال العملية" + (message == null || message.isEmpty() ? "." : ": " + message);
+    }
+
     private void showLogin() {
         setup();
         header();
@@ -144,7 +168,7 @@ public class MainActivity extends Activity {
             auth.signInWithEmailAndPassword(e,p).addOnCompleteListener(task -> {
                 login.setEnabled(true);
                 if(task.isSuccessful()) showDashboard();
-                else toast("تعذر تسجيل الدخول: تحقق من البيانات أو اتصال الإنترنت");
+                else toast(authErrorMessage(task.getException()));
             });
         });
         Button register=button("إنشاء حساب باستخدام رمز دعوة");
@@ -190,7 +214,7 @@ public class MainActivity extends Activity {
             if(c.isEmpty()||e.isEmpty()||p.length()<6){toast("أكمل البيانات وتأكد أن كلمة المرور 6 أحرف على الأقل");return;}
             create.setEnabled(false);
             auth.createUserWithEmailAndPassword(e,p).addOnCompleteListener(task -> {
-                if(!task.isSuccessful()){create.setEnabled(true);toast("لم يتم إنشاء الحساب. تحقق من البريد أو كلمة المرور");return;}
+                if(!task.isSuccessful()){create.setEnabled(true);toast(authErrorMessage(task.getException()));return;}
                 FirebaseUser user=auth.getCurrentUser();
                 if(user==null){create.setEnabled(true);toast("تعذر تحديد الحساب");return;}
                 consumeInvite(c,user,create);
