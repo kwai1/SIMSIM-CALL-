@@ -99,13 +99,16 @@ service cloud.firestore {
       allow create: if isActiveUser(request.auth.uid)
         && request.resource.data.keys().hasOnly(['uid', 'createdAt'])
         && request.resource.data.uid == request.auth.uid
-        && exists(/databases/$(database)/documents/publicProfiles/$(request.auth.uid))
+        && existsAfter(/databases/$(database)/documents/publicProfiles/$(request.auth.uid))
         && getAfter(/databases/$(database)/documents/publicProfiles/$(request.auth.uid)).data.userCode == code;
       allow update, delete: if false;
     }
 
     match /chats/{chatId} {
-      allow read: if isActiveUser(request.auth.uid) && request.auth.uid in resource.data.memberIds;
+      allow get: if isActiveUser(request.auth.uid)
+        && (!exists(/databases/$(database)/documents/chats/$(chatId))
+          || request.auth.uid in resource.data.memberIds);
+      allow list: if false;
       allow create: if isActiveUser(request.auth.uid)
         && request.resource.data.keys().hasOnly(['memberIds', 'createdAt'])
         && request.resource.data.memberIds is list
