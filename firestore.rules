@@ -148,7 +148,47 @@ service cloud.firestore {
     }
 
     match /calls/{callId} {
-      allow read, write: if false;
+      allow get: if isActiveUser(request.auth.uid)
+        && (resource.data.callerUid == request.auth.uid
+          || resource.data.calleeUid == request.auth.uid);
+      // Incoming-call listener is restricted to documents addressed to this user.
+      allow list: if isActiveUser(request.auth.uid)
+        && resource.data.calleeUid == request.auth.uid;
+
+      allow create: if isActiveUser(request.auth.uid)
+        && request.resource.data.keys().hasOnly([
+          'callerUid', 'calleeUid', 'roomName', 'status',
+          'callKeyCiphertext', 'callKeyIv', 'callKeyWrappedKeys',
+          'encryptionVersion', 'createdAt'
+        ])
+        && request.resource.data.callerUid == request.auth.uid
+        && request.resource.data.calleeUid is string
+        && request.resource.data.calleeUid != request.auth.uid
+        && isActiveUser(request.resource.data.calleeUid)
+        && request.resource.data.roomName is string
+        && request.resource.data.status == 'ringing'
+        && request.resource.data.callKeyCiphertext is string
+        && request.resource.data.callKeyIv is string
+        && request.resource.data.callKeyWrappedKeys is map
+        && request.resource.data.callKeyWrappedKeys.keys().hasAll([
+          request.resource.data.callerUid, request.resource.data.calleeUid
+        ])
+        && request.resource.data.encryptionVersion == 1;
+
+      allow update: if isActiveUser(request.auth.uid)
+        && (resource.data.callerUid == request.auth.uid
+          || resource.data.calleeUid == request.auth.uid)
+        && request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly(['status', 'acceptedAt', 'endedAt'])
+        && (
+          (request.auth.uid == resource.data.calleeUid
+            && resource.data.status == 'ringing'
+            && request.resource.data.status in ['accepted', 'rejected'])
+          ||
+          (request.resource.data.status == 'ended'
+            && resource.data.status in ['ringing', 'accepted'])
+        );
+      allow delete: if false;
     }
   }
 }
