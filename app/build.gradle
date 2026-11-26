@@ -14,7 +14,7 @@ android {
         targetSdk 35
         versionCode 1
         versionName '1.0'
-        buildConfigField 'String', 'SIMSIM_SERVER_URL', '\"' + (project.findProperty('SIMSIM_SERVER_URL') ?: '') + '\"'
+        buildConfigField "String", "SIMSIM_SERVER_URL", "\"" + (project.findProperty("SIMSIM_SERVER_URL") ?: "") + "\""
     }
 
     buildFeatures { buildConfig true }
