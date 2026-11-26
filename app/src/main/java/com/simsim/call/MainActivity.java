@@ -192,6 +192,7 @@ public class MainActivity extends Activity {
             profile.put("email",user.getEmail());
             profile.put("createdAt",FieldValue.serverTimestamp());
             profile.put("status","active");
+            profile.put("invitationCode",code);
             db.collection("users").document(user.getUid()).set(profile)
                 .addOnSuccessListener(x -> showDashboard())
                 .addOnFailureListener(err -> toast("تم إنشاء الحساب لكن تعذر حفظ الملف الشخصي"));
