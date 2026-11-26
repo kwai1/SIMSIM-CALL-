@@ -4,9 +4,11 @@ on:
   push:
     branches:
       - simsim-production
+      - kwai1
   pull_request:
     branches:
       - simsim-production
+      - kwai1
   workflow_dispatch:
 
 jobs:
