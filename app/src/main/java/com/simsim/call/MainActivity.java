@@ -1,6 +1,8 @@
 package com.simsim.call;
 
 import android.app.Activity;
+import android.Manifest;
+import android.content.pm.PackageManager;
 import android.os.Bundle;
 import android.graphics.Color;
 import android.graphics.Typeface;
@@ -18,6 +20,14 @@ import android.view.inputmethod.InputMethodManager;
 import java.security.SecureRandom;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.UUID;
+import java.net.HttpURLConnection;
+import java.net.URL;
+import java.io.InputStream;
+import java.io.ByteArrayOutputStream;
+import java.io.OutputStream;
+import java.nio.charset.StandardCharsets;
+import org.json.JSONObject;
 
 import com.google.firebase.auth.FirebaseAuth;
 import com.google.firebase.auth.FirebaseUser;
@@ -55,6 +65,15 @@ public class MainActivity extends Activity {
     private String activeOtherPublicKey;
     private boolean profileReady = false;
     private ListenerRegistration messagesListener;
+    private ListenerRegistration incomingCallsListener;
+    private ListenerRegistration currentCallListener;
+    private DocumentReference currentCallRef;
+    private CallManager callManager;
+    private AlertDialog incomingCallDialog;
+    private AlertDialog activeCallDialog;
+    private String joiningCallId;
+    private String pendingCallId;
+    private boolean pendingOutgoingCall = false;
     private LinearLayout messagesContainer;
     private String activeChatId;
     private final Runnable presenceBeat = new Runnable() {
@@ -70,6 +89,7 @@ public class MainActivity extends Activity {
         getWindow().setNavigationBarColor(BG);
         auth = FirebaseAuth.getInstance();
         db = FirebaseFirestore.getInstance();
+        callManager = new CallManager(this);
         if (auth.getCurrentUser() != null) showDashboard();
         else showLogin();
     }
@@ -335,7 +355,7 @@ public class MainActivity extends Activity {
                 }).addOnSuccessListener(savedCode -> {
                     myPublicKey=localPublicKey; myUserCode=savedCode; myDisplayName=displayName;
                     codeView.setText(savedCode);
-                    profileReady=true; startPresence();
+                    profileReady=true; startPresence(); attachIncomingCallsListener();
                 }).addOnFailureListener(e -> {
                     profileReady=false; codeView.setText("تعذر تجهيز الرمز");
                     toast("تعذر تجهيز رمز المستخدم. تحقق من قواعد Firestore الجديدة.");
@@ -435,6 +455,8 @@ public class MainActivity extends Activity {
         setup(); header();
         text("محادثة مشفرة مع "+otherName,20,WHITE,true);
         text("تشفير طرف إلى طرف • لا يُحفظ النص مكشوفاً",11,BLUE,true);
+        Button callButton=button("اتصال صوتي مشفّر");
+        callButton.setOnClickListener(v -> startOutgoingCall());
         ScrollView scroll=new ScrollView(this);
         messagesContainer=new LinearLayout(this);
         messagesContainer.setOrientation(LinearLayout.VERTICAL);
