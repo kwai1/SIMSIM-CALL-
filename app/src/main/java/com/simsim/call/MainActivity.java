@@ -1,6 +1,8 @@
 package com.simsim.call;
 
 import android.app.Activity;
+import android.Manifest;
+import android.content.pm.PackageManager;
 import android.os.Bundle;
 import android.graphics.Color;
 import android.graphics.Typeface;
@@ -18,6 +20,14 @@ import android.view.inputmethod.InputMethodManager;
 import java.security.SecureRandom;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.UUID;
+import java.net.HttpURLConnection;
+import java.net.URL;
+import java.io.InputStream;
+import java.io.ByteArrayOutputStream;
+import java.io.OutputStream;
+import java.nio.charset.StandardCharsets;
+import org.json.JSONObject;
 
 import com.google.firebase.auth.FirebaseAuth;
 import com.google.firebase.auth.FirebaseUser;
@@ -42,15 +52,27 @@ public class MainActivity extends Activity {
     private LinearLayout root;
     private FirebaseAuth auth;
     private FirebaseFirestore db;
-    private final String ADMIN_KEY = "SIMSIM-ADMIN-2026";
     private final Handler presenceHandler = new Handler(Looper.getMainLooper());
     private ListenerRegistration contactsListener;
     private LinearLayout contactsList;
     private EditText contactsSearch;
     private com.google.firebase.firestore.QuerySnapshot lastContacts;
     private String myDisplayName = "عضو سمسم";
+    private String myPublicKey;
+    private String myUserCode;
+    private String activeOtherUid;
+    private String activeOtherPublicKey;
     private boolean profileReady = false;
     private ListenerRegistration messagesListener;
+    private ListenerRegistration incomingCallsListener;
+    private ListenerRegistration currentCallListener;
+    private DocumentReference currentCallRef;
+    private CallManager callManager;
+    private AlertDialog incomingCallDialog;
+    private AlertDialog activeCallDialog;
+    private String joiningCallId;
+    private String pendingCallId;
+    private boolean pendingOutgoingCall = false;
     private LinearLayout messagesContainer;
     private String activeChatId;
     private final Runnable presenceBeat = new Runnable() {
@@ -66,6 +88,7 @@ public class MainActivity extends Activity {
         getWindow().setNavigationBarColor(BG);
         auth = FirebaseAuth.getInstance();
         db = FirebaseFirestore.getInstance();
+        callManager = new CallManager(this);
         if (auth.getCurrentUser() != null) showDashboard();
         else showLogin();
     }
@@ -149,29 +172,29 @@ public class MainActivity extends Activity {
 
     private void consumeInvite(String code,FirebaseUser user,Button button) {
         DocumentReference invite=db.collection("invitations").document(code);
+        DocumentReference userRef=db.collection("users").document(user.getUid());
         db.runTransaction(transaction -> {
             com.google.firebase.firestore.DocumentSnapshot snap=transaction.get(invite);
             if(!snap.exists()) throw new FirebaseFirestoreException("رمز غير موجود",FirebaseFirestoreException.Code.NOT_FOUND);
             String status=snap.getString("status");
             if(!"نشط".equals(status)&&!"active".equalsIgnoreCase(status))
                 throw new FirebaseFirestoreException("رمز مستخدم أو غير نشط",FirebaseFirestoreException.Code.PERMISSION_DENIED);
-            transaction.update(invite,"status","مستخدم","usedBy",user.getUid(),"usedAt",FieldValue.serverTimestamp());
-            return null;
-        }).addOnCompleteListener(task -> {
-            if(!task.isSuccessful()){
-                user.delete();
-                button.setEnabled(true);
-                toast("رمز الدعوة غير صالح أو سبق استخدامه");
-                return;
-            }
             Map<String,Object> profile=new HashMap<>();
             profile.put("email",user.getEmail());
             profile.put("createdAt",FieldValue.serverTimestamp());
             profile.put("status","active");
-            db.collection("users").document(user.getUid()).set(profile)
-                .addOnSuccessListener(x -> showDashboard())
-                .addOnFailureListener(err -> toast("تم إنشاء الحساب لكن تعذر حفظ الملف الشخصي"));
-        });
+            profile.put("invitationCode",code);
+            transaction.update(invite,"status","مستخدم","usedBy",user.getUid(),"usedAt",FieldValue.serverTimestamp());
+            transaction.set(userRef,profile);
+            return null;
+        }).addOnSuccessListener(x -> showDashboard())
+          .addOnFailureListener(error -> {
+              user.delete().addOnCompleteListener(deleted -> {
+                  auth.signOut();
+                  button.setEnabled(true);
+                  toast("رمز الدعوة غير صالح أو سبق استخدامه؛ لم يتم تفعيل الحساب");
+              });
+          });
     }
 
     private void showAdminGate() {
@@ -213,11 +236,48 @@ public class MainActivity extends Activity {
             String code=createCode();
             Map<String,Object> data=new HashMap<>();
             data.put("status","نشط"); data.put("createdAt",FieldValue.serverTimestamp());
-            db.collection("invitations").document(code).set(data)
-                .addOnSuccessListener(x -> showGeneratedCode(code))
-                .addOnFailureListener(err -> toast("تعذر إنشاء الدعوة. تحقق من قواعد Firestore"));
+            DocumentReference inviteRef=db.collection("invitations").document(code);
+            db.runTransaction(transaction -> {
+                com.google.firebase.firestore.DocumentSnapshot existing=transaction.get(inviteRef);
+                if(existing.exists()) throw new IllegalStateException("INVITATION_CODE_COLLISION");
+                transaction.set(inviteRef,data);
+                return null;
+            }).addOnSuccessListener(x -> showGeneratedCode(code))
+              .addOnFailureListener(err -> toast("تعذر إنشاء الدعوة. حاول مرة أخرى أو تحقق من صلاحية المدير."));
         });
-        Button logout=button("تسجيل الخروج"); logout.setOnClickListener(v -> showLogin());
+        Button useApp=button("الدخول إلى التطبيق كمدير");
+        useApp.setOnClickListener(v -> showDashboard());
+        Button manage=button("إدارة المستخدمين");
+        manage.setOnClickListener(v -> showAdminUsers());
+        Button logout=button("تسجيل الخروج"); logout.setOnClickListener(v -> { auth.signOut(); showLogin(); });
+    }
+
+
+    private void showAdminUsers() {
+        setup(); header();
+        text("إدارة الحسابات",22,WHITE,true);
+        db.collection("users").get()
+            .addOnSuccessListener(snapshot -> {
+                if(snapshot.isEmpty()) text("لا توجد حسابات مسجلة بعد",14,GRAY,false);
+                for(com.google.firebase.firestore.DocumentSnapshot member:snapshot) {
+                    String email=member.getString("email");
+                    String status=member.getString("status");
+                    String uid=member.getId();
+                    text((email==null?uid:email)+"\n"+uid+"\nالحالة: "+status,13,WHITE,false);
+                    boolean active="active".equals(status);
+                    Button toggle=button(active?"تعطيل هذا الحساب":"إعادة تفعيل الحساب");
+                    toggle.setOnClickListener(v -> {
+                        toggle.setEnabled(false);
+                        db.collection("users").document(uid)
+                            .update("status",active?"disabled":"active")
+                            .addOnSuccessListener(x -> {toast(active?"تم تعطيل الحساب":"تم تفعيل الحساب");showAdminUsers();})
+                            .addOnFailureListener(e -> {toggle.setEnabled(true);toast("تعذر تعديل صلاحية الحساب");});
+                    });
+                }
+            })
+            .addOnFailureListener(e -> toast("تعذر تحميل قائمة المستخدمين. تحقق من صلاحية المدير."));
+        Button back=button("رجوع إلى لوحة المدير");
+        back.setOnClickListener(v -> showAdmin());
     }
 
     private String createCode() {
@@ -239,59 +299,115 @@ public class MainActivity extends Activity {
     }
 
     private void showDashboard() {
-        setup(); header(); text("ACCESS GRANTED",20,BLUE,true);
+        setup(); header();
+        text("ACCESS GRANTED",20,BLUE,true);
         text("مرحباً بك في شبكة سمسم",19,WHITE,true);
         FirebaseUser u=auth.getCurrentUser();
         if(u==null){ showLogin(); return; }
         if(u.getEmail()!=null) text(u.getEmail(),13,GRAY,false);
-        text("اسمك الظاهر للأعضاء",15,BLUE,true);
-        final EditText nameField=input("اكتب الاسم الذي سيظهر للآخرين",InputType.TYPE_CLASS_TEXT|InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);
+        text("رمز المستخدم الخاص بك",15,BLUE,true);
+        TextView codeView=new TextView(this);
+        codeView.setText("جارٍ تجهيز هويتك الآمنة...");
+        codeView.setTextColor(WHITE); codeView.setTextSize(20);
+        codeView.setGravity(Gravity.CENTER); codeView.setPadding(dp(12),dp(14),dp(12),dp(14));
+        codeView.setBackground(shape(PANEL,BLUE));
+        root.addView(codeView,new LinearLayout.LayoutParams(-1,dp(62)));
+        final EditText nameField=input("اسم العرض",InputType.TYPE_CLASS_TEXT|InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);
         db.collection("publicProfiles").document(u.getUid()).get()
             .addOnSuccessListener(doc -> {
                 String saved=doc.getString("displayName");
-                if(saved!=null && !saved.trim().isEmpty()) {
-                    myDisplayName=saved;
-                    nameField.setText(saved);
-                    profileReady=true;
-                    startPresence();
-                } else {
-                    String fallback="عضو "+u.getUid().substring(0,Math.min(5,u.getUid().length()));
-                    nameField.setText(fallback);
-                    Map<String,Object> initial=new HashMap<>();
-                    initial.put("uid",u.getUid());
-                    initial.put("displayName",fallback);
-                    initial.put("online",true);
-                    initial.put("lastActive",FieldValue.serverTimestamp());
-                    initial.put("createdAt",FieldValue.serverTimestamp());
-                    db.collection("publicProfiles").document(u.getUid()).set(initial,SetOptions.merge())
-                        .addOnSuccessListener(x -> { myDisplayName=fallback; profileReady=true; startPresence(); })
-                        .addOnFailureListener(e -> toast("تعذر إنشاء ملفك الظاهر. انشر قواعد Firestore الجديدة"));
-                }
-            });
+                if(saved==null || saved.trim().isEmpty())
+                    saved="عضو "+u.getUid().substring(0,Math.min(5,u.getUid().length()));
+                nameField.setText(saved);
+                ensureSecureProfile(u,saved,codeView);
+            })
+            .addOnFailureListener(e -> toast("تعذر تحميل ملفك. تحقق من قواعد Firestore."));
         Button saveName=button("حفظ الاسم");
         saveName.setOnClickListener(v -> {
             String value=nameField.getText().toString().trim();
             if(value.length()<2 || value.length()>30){toast("الاسم يجب أن يكون بين حرفين و30 حرفاً");return;}
-            saveName.setEnabled(false);
+            if(myPublicKey==null || myUserCode==null){toast("انتظر تجهيز الهوية الآمنة");return;}
             Map<String,Object> profile=new HashMap<>();
-            profile.put("uid",u.getUid());
-            profile.put("displayName",value);
-            profile.put("online",true);
-            profile.put("lastActive",FieldValue.serverTimestamp());
+            profile.put("uid",u.getUid()); profile.put("displayName",value);
+            profile.put("online",true); profile.put("lastActive",FieldValue.serverTimestamp());
             profile.put("createdAt",FieldValue.serverTimestamp());
+            profile.put("publicKey",myPublicKey); profile.put("userCode",myUserCode);
+            saveName.setEnabled(false);
             db.collection("publicProfiles").document(u.getUid()).set(profile,SetOptions.merge())
-                 .addOnSuccessListener(x -> {myDisplayName=value;profileReady=true;saveName.setEnabled(true);toast("تم حفظ اسمك");startPresence();})
-                .addOnFailureListener(err -> {saveName.setEnabled(true);toast("تعذر حفظ الاسم. انشر قواعد publicProfiles أولاً");});
+                .addOnSuccessListener(x -> {myDisplayName=value;saveName.setEnabled(true);toast("تم حفظ الاسم");startPresence();})
+                .addOnFailureListener(err -> {saveName.setEnabled(true);toast("تعذر حفظ الاسم");});
         });
-        Button contacts=button("♙  الأعضاء وجهات الاتصال");
-        contacts.setOnClickListener(v -> showContacts());
-        Button calls=button("◉  الاتصالات");
-        calls.setOnClickListener(v -> toast("قسم الاتصال الصوتي ما زال يحتاج ربط LiveKit"));
-        Button messages=button("▤  المحادثات");
-        messages.setOnClickListener(v -> showContacts());
+        Button copyUserCode=button("نسخ رمز المستخدم");
+        copyUserCode.setOnClickListener(v -> {
+            if(myUserCode==null){toast("انتظر تجهيز رمزك");return;}
+            ClipboardManager cm=(ClipboardManager)getSystemService(Context.CLIPBOARD_SERVICE);
+            cm.setPrimaryClip(ClipData.newPlainText("SIMSIM USER CODE",myUserCode));
+            toast("تم نسخ رمز المستخدم");
+        });
+        Button search=button("⌕  البحث عن شخص برمز المستخدم");
+        search.setOnClickListener(v -> showContacts());
+        Button calls=button("◉  الاتصالات الصوتية");
+        calls.setOnClickListener(v -> toast("افتح محادثة مع الشخص ثم اضغط اتصال صوتي مشفّر."));
         Button logout=button("تسجيل الخروج");
-        logout.setOnClickListener(v -> { updatePresence(false); profileReady=false; auth.signOut(); showLogin(); });
-        // Profile creation and presence start after the profile document is confirmed.
+        logout.setOnClickListener(v -> {
+            updatePresence(false); profileReady=false; myPublicKey=null; myUserCode=null;
+            auth.signOut(); showLogin();
+        });
+    }
+
+    private String createUserCode() {
+        String chars="ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+        SecureRandom random=new SecureRandom();
+        StringBuilder code=new StringBuilder("SSM");
+        for(int i=0;i<8;i++) code.append(chars.charAt(random.nextInt(chars.length())));
+        return code.toString();
+    }
+
+    private void ensureSecureProfile(FirebaseUser user,String displayName,TextView codeView) {
+        try {
+            final String localPublicKey=CryptoManager.getPublicKeyBase64();
+            final DocumentReference profileRef=db.collection("publicProfiles").document(user.getUid());
+            profileRef.get().addOnSuccessListener(profileDoc -> {
+                String registeredKey=profileDoc.getString("publicKey");
+                if(registeredKey!=null && !registeredKey.equals(localPublicKey)) {
+                    profileReady=false;
+                    codeView.setText("مفتاح جهاز مختلف");
+                    toast("مفتاح التشفير على هذا الجهاز لا يطابق المفتاح المسجل. لا تحذف بيانات التطبيق قبل إعداد استعادة آمنة.");
+                    return;
+                }
+                String existingCode=profileDoc.getString("userCode");
+                final String code=(existingCode==null || existingCode.isEmpty())?createUserCode():existingCode;
+                DocumentReference codeRef=db.collection("userCodes").document(code);
+                db.runTransaction(transaction -> {
+                    com.google.firebase.firestore.DocumentSnapshot codeDoc=transaction.get(codeRef);
+                    if(codeDoc.exists() && !user.getUid().equals(codeDoc.getString("uid")))
+                        throw new IllegalStateException("USER_CODE_COLLISION");
+                    Map<String,Object> data=new HashMap<>();
+                    data.put("uid",user.getUid()); data.put("displayName",displayName);
+                    data.put("online",true); data.put("lastActive",FieldValue.serverTimestamp());
+                    data.put("createdAt",FieldValue.serverTimestamp());
+                    data.put("publicKey",localPublicKey); data.put("userCode",code);
+                    transaction.set(profileRef,data,SetOptions.merge());
+                    if(!codeDoc.exists()) {
+                        Map<String,Object> mapping=new HashMap<>();
+                        mapping.put("uid",user.getUid());
+                        mapping.put("createdAt",FieldValue.serverTimestamp());
+                        transaction.set(codeRef,mapping);
+                    }
+                    return code;
+                }).addOnSuccessListener(savedCode -> {
+                    myPublicKey=localPublicKey; myUserCode=savedCode; myDisplayName=displayName;
+                    codeView.setText(savedCode);
+                    profileReady=true; startPresence(); attachIncomingCallsListener();
+                }).addOnFailureListener(e -> {
+                    profileReady=false; codeView.setText("تعذر تجهيز الرمز");
+                    toast("تعذر تجهيز رمز المستخدم. تحقق من قواعد Firestore الجديدة.");
+                });
+            }).addOnFailureListener(e -> toast("تعذر قراءة ملف المستخدم"));
+        } catch(Exception e) {
+            profileReady=false;
+            toast("تعذر إنشاء مفتاح التشفير على هذا الجهاز");
+        }
     }
 
     private void startPresence() {
@@ -314,105 +430,80 @@ public class MainActivity extends Activity {
         FirebaseUser current=auth.getCurrentUser();
         if(current==null){showLogin();return;}
         setup(); header();
-        text("دليل أعضاء سمسم",22,WHITE,true);
-        text("اختر عضواً لعرض حالته وملفه",13,GRAY,false);
-        contactsSearch=input("ابحث بالاسم...",InputType.TYPE_CLASS_TEXT);
-        contactsSearch.addTextChangedListener(new TextWatcher() {
-            @Override public void beforeTextChanged(CharSequence s,int start,int count,int after) {}
-            @Override public void onTextChanged(CharSequence s,int start,int before,int count) {
-                if(lastContacts!=null) renderContacts(lastContacts);
+        text("البحث برمز المستخدم",22,WHITE,true);
+        text("أدخل رمز SIMSIM الذي أعطاك إياه الشخص",13,GRAY,false);
+        EditText codeInput=input("مثال: SSMXXXXXXXX",InputType.TYPE_CLASS_TEXT|InputType.TYPE_TEXT_FLAG_CAP_CHARACTERS);
+        Button find=button("بحث");
+        find.setOnClickListener(v -> {
+            String code=codeInput.getText().toString().trim().toUpperCase();
+            if(code.length()!=11 || !code.startsWith("SSM")) {
+                toast("تحقق من الرمز. يجب أن يبدأ بـ SSM");
+                return;
             }
-            @Override public void afterTextChanged(Editable e) {}
+            find.setEnabled(false);
+            db.collection("userCodes").document(code).get()
+                .addOnSuccessListener(mapping -> {
+                    if(!mapping.exists()) {
+                        find.setEnabled(true); toast("لم يتم العثور على مستخدم بهذا الرمز"); return;
+                    }
+                    String uid=mapping.getString("uid");
+                    if(uid==null || uid.equals(current.getUid())) {
+                        find.setEnabled(true); toast("هذا رمز حسابك أو أنه غير صالح"); return;
+                    }
+                    db.collection("publicProfiles").document(uid).get()
+                        .addOnSuccessListener(profile -> {
+                            find.setEnabled(true);
+                            if(!profile.exists()) {toast("ملف المستخدم غير متاح");return;}
+                            String name=profile.getString("displayName");
+                            String publicKey=profile.getString("publicKey");
+                            if(publicKey==null || publicKey.isEmpty()) {toast("هذا المستخدم يحتاج تحديث التطبيق لتفعيل التشفير");return;}
+                            openChat(uid,name==null?"عضو سمسم":name,publicKey);
+                        })
+                        .addOnFailureListener(e -> {find.setEnabled(true);toast("تعذر تحميل ملف المستخدم");});
+                })
+                .addOnFailureListener(e -> {find.setEnabled(true);toast("تعذر البحث. تحقق من اتصال الإنترنت");});
         });
-        contactsList=new LinearLayout(this);
-        contactsList.setOrientation(LinearLayout.VERTICAL);
-        root.addView(contactsList,new LinearLayout.LayoutParams(-1,-2));
-        Button refresh=button("تحديث القائمة");
-        refresh.setOnClickListener(v -> loadContactsOnce());
         Button back=button("رجوع");
         back.setOnClickListener(v -> showDashboard());
-        attachContactsListener();
-    }
-
-    private void attachContactsListener() {
-        if(contactsListener!=null) contactsListener.remove();
-        contactsListener=db.collection("publicProfiles").addSnapshotListener((snap,error) -> {
-            if(error!=null){toast("تعذر تحميل الأعضاء. تحقق من قواعد Firestore");return;}
-            renderContacts(snap);
-        });
-    }
-
-    private void loadContactsOnce() {
-        db.collection("publicProfiles").get()
-            .addOnSuccessListener(this::renderContacts)
-            .addOnFailureListener(e -> toast("تعذر تحديث قائمة الأعضاء"));
-    }
-
-    private void renderContacts(com.google.firebase.firestore.QuerySnapshot snap) {
-        if(contactsList==null || snap==null) return;
-        lastContacts=snap;
-        contactsList.removeAllViews();
-        String filter=contactsSearch==null?"":contactsSearch.getText().toString().trim().toLowerCase();
-        int count=0;
-        for(QueryDocumentSnapshot doc:snap) {
-            FirebaseUser me=auth.getCurrentUser();
-            if(me!=null && doc.getId().equals(me.getUid())) continue;
-            String name=doc.getString("displayName");
-            if(name==null || name.trim().isEmpty()) name="عضو سمسم";
-            final String shownName=name;
-            if(!filter.isEmpty() && !shownName.toLowerCase().contains(filter)) continue;
-            boolean online=Boolean.TRUE.equals(doc.getBoolean("online"));
-            com.google.firebase.Timestamp last=doc.getTimestamp("lastActive");
-            if(last==null || System.currentTimeMillis()-last.toDate().getTime()>90000L) online=false;
-            final boolean onlineStatus=online;
-            LinearLayout card=new LinearLayout(this);
-            card.setOrientation(LinearLayout.VERTICAL);
-            card.setPadding(dp(16),dp(12),dp(16),dp(12));
-            card.setBackground(shape(PANEL,BLUE));
-            TextView title=new TextView(this);
-            title.setText("◉  "+shownName);
-            title.setTextColor(WHITE); title.setTextSize(18); title.setTypeface(null,Typeface.BOLD);
-            TextView status=new TextView(this);
-            status.setText(onlineStatus?"● متصل الآن":"○ غير متصل");
-            status.setTextColor(onlineStatus?Color.rgb(40,220,160):GRAY); status.setTextSize(13);
-            card.addView(title); card.addView(status);
-            LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(-1,-2);
-            lp.setMargins(0,dp(6),0,dp(6));
-            contactsList.addView(card,lp);
-            final String targetUid=doc.getId();
-            card.setOnClickListener(v -> openChat(targetUid,shownName));
-            count++;
-        }
-        if(count==0) {
-            TextView empty=new TextView(this);
-            empty.setText("لا يوجد أعضاء آخرون بعد. اطلب من أصدقائك التسجيل برمز دعوة.");
-            empty.setTextColor(GRAY); empty.setTextSize(15); empty.setGravity(Gravity.CENTER);
-            empty.setPadding(dp(12),dp(24),dp(12),dp(24));
-            contactsList.addView(empty);
-        }
     }
 
     private String chatIdFor(String a,String b) {
         return a.compareTo(b)<0 ? a+"_"+b : b+"_"+a;
     }
 
-    private void openChat(String otherUid,String otherName) {
+    private void openChat(String otherUid,String otherName,String otherPublicKey) {
         FirebaseUser me=auth.getCurrentUser();
-        if(me==null) { showLogin(); return; }
+        if(me==null || !profileReady || myPublicKey==null) {showLogin();return;}
+        activeOtherUid=otherUid;
+        activeOtherPublicKey=otherPublicKey;
         activeChatId=chatIdFor(me.getUid(),otherUid);
-        Map<String,Object> chat=new HashMap<>();
-        java.util.List<String> members=new java.util.ArrayList<>();
-        members.add(me.getUid()); members.add(otherUid);
-        chat.put("memberIds",members);
-        chat.put("createdAt",FieldValue.serverTimestamp());
-        db.collection("chats").document(activeChatId).set(chat,SetOptions.merge())
-            .addOnSuccessListener(x -> showChatScreen(otherName))
-            .addOnFailureListener(e -> toast("تعذر فتح المحادثة. تحقق من قواعد chats"));
+        DocumentReference chatRef=db.collection("chats").document(activeChatId);
+        chatRef.get().addOnSuccessListener(existing -> {
+            if(existing.exists()) {
+                showChatScreen(otherName);
+                return;
+            }
+            Map<String,Object> chat=new HashMap<>();
+            java.util.List<String> members=new java.util.ArrayList<>();
+            members.add(me.getUid()); members.add(otherUid);
+            chat.put("memberIds",members);
+            chat.put("createdAt",FieldValue.serverTimestamp());
+            chatRef.set(chat)
+                .addOnSuccessListener(x -> showChatScreen(otherName))
+                .addOnFailureListener(e -> toast("تعذر إنشاء المحادثة. تحقق من صلاحية الحسابين."));
+        }).addOnFailureListener(e -> toast("تعذر فتح المحادثة"));
     }
 
     private void showChatScreen(String otherName) {
         setup(); header();
-        text("محادثة مع "+otherName,20,WHITE,true);
+        text("محادثة مشفرة مع "+otherName,20,WHITE,true);
+        text("تشفير طرف إلى طرف • لا يُحفظ النص مكشوفاً",11,BLUE,true);
+        try {
+            text("بصمة مفتاح الطرف (قارنها معه خارج التطبيق):",10,GRAY,false);
+            text(CryptoManager.fingerprint(activeOtherPublicKey),10,BLUE,true);
+        } catch(Exception ignored) { }
+        Button callButton=button("اتصال صوتي مشفّر");
+        callButton.setOnClickListener(v -> startOutgoingCall());
         ScrollView scroll=new ScrollView(this);
         messagesContainer=new LinearLayout(this);
         messagesContainer.setOrientation(LinearLayout.VERTICAL);
@@ -435,35 +526,53 @@ public class MainActivity extends Activity {
             FirebaseUser me=auth.getCurrentUser();
             if(body.isEmpty() || me==null) return;
             if(body.length()>4000){toast("الرسالة طويلة جداً");return;}
+            if(myPublicKey==null || activeOtherPublicKey==null || activeOtherUid==null) {
+                toast("مفاتيح التشفير غير جاهزة"); return;
+            }
             send.setEnabled(false);
-            Map<String,Object> data=new HashMap<>();
-            data.put("senderId",me.getUid());
-            data.put("text",body);
-            data.put("createdAt",FieldValue.serverTimestamp());
-            db.collection("chats").document(activeChatId).collection("messages").add(data)
-                .addOnSuccessListener(x -> {
-                    Map<String,Object> update=new HashMap<>();
-                    update.put("lastMessage",body);
-                    update.put("lastMessageAt",FieldValue.serverTimestamp());
-                    db.collection("chats").document(activeChatId).set(update,SetOptions.merge());
-                    message.setText(""); send.setEnabled(true);
-                })
-                .addOnFailureListener(e -> {send.setEnabled(true);toast("تعذر إرسال الرسالة");});
+            try {
+                Map<String,Object> data=CryptoManager.encryptForChat(
+                    body,me.getUid(),myPublicKey,activeOtherUid,activeOtherPublicKey);
+                data.put("senderId",me.getUid());
+                data.put("createdAt",FieldValue.serverTimestamp());
+                db.collection("chats").document(activeChatId).collection("messages").add(data)
+                    .addOnSuccessListener(x -> {
+                        Map<String,Object> update=new HashMap<>();
+                        update.put("lastMessageAt",FieldValue.serverTimestamp());
+                        db.collection("chats").document(activeChatId).set(update,SetOptions.merge());
+                        message.setText(""); send.setEnabled(true);
+                    })
+                    .addOnFailureListener(e -> {send.setEnabled(true);toast("تعذر إرسال الرسالة المشفرة");});
+            } catch(Exception e) {
+                send.setEnabled(true);
+                toast("فشل تشفير الرسالة. تحقق من مفاتيح الطرفين.");
+            }
         });
-        Button back=button("رجوع إلى الأعضاء");
-        back.setOnClickListener(v -> { if(messagesListener!=null) messagesListener.remove(); showContacts(); });
+        Button back=button("رجوع إلى البحث");
+        back.setOnClickListener(v -> {
+            if(messagesListener!=null) messagesListener.remove();
+            showContacts();
+        });
         if(messagesListener!=null) messagesListener.remove();
         messagesListener=db.collection("chats").document(activeChatId).collection("messages")
             .orderBy("createdAt")
             .addSnapshotListener((snap,error) -> {
-                if(error!=null){toast("تعذر تحميل الرسائل");return;}
+                if(error!=null){toast("تعذر تحميل الرسائل المشفرة");return;}
                 messagesContainer.removeAllViews();
                 if(snap==null) return;
                 for(com.google.firebase.firestore.QueryDocumentSnapshot item:snap) {
                     String sender=item.getString("senderId");
-                    String body=item.getString("text");
+                    String plain;
+                    try {
+                        Map<String,Object> wrapped=(Map<String,Object>)item.get("wrappedKeys");
+                        plain=CryptoManager.decryptMessage(
+                            item.getString("ciphertext"),item.getString("iv"),wrapped,
+                            auth.getCurrentUser().getUid());
+                    } catch(Exception decryptError) {
+                        plain="رسالة مشفرة — لا يمكن فكها بهذا الجهاز";
+                    }
                     TextView line=new TextView(this);
-                    line.setText((auth.getCurrentUser()!=null && auth.getCurrentUser().getUid().equals(sender)?"أنت: ":"العضو: ")+(body==null?"":body));
+                    line.setText((auth.getCurrentUser()!=null && auth.getCurrentUser().getUid().equals(sender)?"أنت: ":"العضو: ")+plain);
                     line.setTextColor(WHITE); line.setTextSize(16);
                     line.setPadding(dp(12),dp(10),dp(12),dp(10));
                     line.setBackground(shape(PANEL,BLUE));
@@ -473,6 +582,235 @@ public class MainActivity extends Activity {
                 }
                 scroll.post(() -> scroll.fullScroll(View.FOCUS_DOWN));
             });
+    }
+
+
+    private void attachIncomingCallsListener() {
+        FirebaseUser me=auth.getCurrentUser();
+        if(me==null || !profileReady) return;
+        if(incomingCallsListener!=null) incomingCallsListener.remove();
+        incomingCallsListener=db.collection("calls")
+            .whereEqualTo("calleeUid",me.getUid())
+            .addSnapshotListener((snap,error) -> {
+                if(error!=null || snap==null) return;
+                for(com.google.firebase.firestore.QueryDocumentSnapshot call:snap) {
+                    if("ringing".equals(call.getString("status"))) showIncomingCall(call);
+                }
+            });
+    }
+
+    private void showIncomingCall(com.google.firebase.firestore.DocumentSnapshot call) {
+        if(incomingCallDialog!=null && incomingCallDialog.isShowing()) return;
+        String callerUid=call.getString("callerUid");
+        if(callerUid==null) return;
+        db.collection("publicProfiles").document(callerUid).get()
+            .addOnSuccessListener(profile -> {
+                String callerName=profile.getString("displayName");
+                if(callerName==null) callerName="عضو سمسم";
+                if(isFinishing() || (incomingCallDialog!=null && incomingCallDialog.isShowing())) return;
+                incomingCallDialog=new AlertDialog.Builder(this)
+                    .setTitle("مكالمة واردة")
+                    .setMessage("مكالمة صوتية مشفرة من: "+callerName)
+                    .setPositiveButton("قبول", (dialog,which) ->
+                        call.getReference().update(
+                            "status","accepted",
+                            "acceptedAt",FieldValue.serverTimestamp())
+                            .addOnSuccessListener(x -> {
+                                watchCurrentCall(call.getReference());
+                                joinCallFromDocument(call);
+                            })
+                            .addOnFailureListener(e -> toast("تعذر قبول المكالمة")))
+                    .setNegativeButton("رفض", (dialog,which) ->
+                        call.getReference().update("status","rejected")
+                            .addOnFailureListener(e -> toast("تعذر رفض المكالمة")))
+                    .setCancelable(false)
+                    .create();
+                incomingCallDialog.show();
+            });
+    }
+
+    private void startOutgoingCall() {
+        FirebaseUser me=auth.getCurrentUser();
+        if(me==null || activeOtherUid==null || activeOtherPublicKey==null
+                || myPublicKey==null || myUserCode==null) {
+            toast("افتح محادثة مع مستخدم صالح أولاً"); return;
+        }
+        if(checkSelfPermission(Manifest.permission.RECORD_AUDIO)!=PackageManager.PERMISSION_GRANTED) {
+            pendingOutgoingCall=true;
+            requestPermissions(new String[]{Manifest.permission.RECORD_AUDIO},701);
+            return;
+        }
+        final String callId=UUID.randomUUID().toString();
+        final String roomName="simsim-"+callId;
+        try {
+            String secret=CryptoManager.createCallSecret();
+            Map<String,Object> encrypted=CryptoManager.encryptForChat(
+                secret,me.getUid(),myPublicKey,activeOtherUid,activeOtherPublicKey);
+            Map<String,Object> call=new HashMap<>();
+            call.put("callerUid",me.getUid());
+            call.put("calleeUid",activeOtherUid);
+            call.put("roomName",roomName);
+            call.put("status","ringing");
+            call.put("callKeyCiphertext",encrypted.get("ciphertext"));
+            call.put("callKeyIv",encrypted.get("iv"));
+            call.put("callKeyWrappedKeys",encrypted.get("wrappedKeys"));
+            call.put("encryptionVersion",1);
+            call.put("createdAt",FieldValue.serverTimestamp());
+            DocumentReference ref=db.collection("calls").document(callId);
+            ref.set(call).addOnSuccessListener(x -> {
+                currentCallRef=ref;
+                watchCurrentCall(ref);
+                toast("تم إرسال طلب الاتصال. بانتظار قبول الطرف الآخر.");
+            }).addOnFailureListener(e -> toast("تعذر إنشاء المكالمة. تحقق من قواعد Firestore."));
+        } catch(Exception e) {
+            toast("تعذر إنشاء مفتاح تشفير المكالمة");
+        }
+    }
+
+
+    private void watchCurrentCall(DocumentReference ref) {
+        if(currentCallListener!=null) currentCallListener.remove();
+        currentCallListener=ref.addSnapshotListener((snapshot,error) -> {
+            if(error!=null || snapshot==null || !snapshot.exists()) return;
+            String status=snapshot.getString("status");
+            if("accepted".equals(status)) joinCallFromDocument(snapshot);
+            else if("rejected".equals(status)) {
+                joiningCallId=null;
+                toast("تم رفض المكالمة");
+                if(currentCallListener!=null) currentCallListener.remove();
+            } else if("ended".equals(status)) {
+                joiningCallId=null;
+                if(callManager!=null) callManager.disconnect(null);
+                if(activeCallDialog!=null && activeCallDialog.isShowing()) activeCallDialog.dismiss();
+                toast("انتهت المكالمة");
+            }
+        });
+    }
+
+    private void joinCallFromDocument(com.google.firebase.firestore.DocumentSnapshot call) {
+        FirebaseUser me=auth.getCurrentUser();
+        if(me==null || !call.exists()) return;
+        String callId=call.getId();
+        currentCallRef=call.getReference();
+        if(checkSelfPermission(Manifest.permission.RECORD_AUDIO)!=PackageManager.PERMISSION_GRANTED) {
+            pendingCallId=callId;
+            requestPermissions(new String[]{Manifest.permission.RECORD_AUDIO},701);
+            return;
+        }
+        if(callId.equals(joiningCallId)) return;
+        joiningCallId=callId;
+        try {
+            Map<String,Object> wrapped=(Map<String,Object>)call.get("callKeyWrappedKeys");
+            String sharedKey=CryptoManager.decryptMessage(
+                call.getString("callKeyCiphertext"),
+                call.getString("callKeyIv"),
+                wrapped,
+                me.getUid());
+            requestCallTokenAndConnect(callId,sharedKey);
+        } catch(Exception e) {
+            joiningCallId=null;
+            toast("تعذر فك مفتاح المكالمة على هذا الجهاز");
+        }
+    }
+
+    private void requestCallTokenAndConnect(String callId,String sharedKey) {
+        String baseUrl=BuildConfig.SIMSIM_SERVER_URL;
+        if(baseUrl==null || baseUrl.trim().isEmpty()) {
+            joiningCallId=null;
+            toast("خادم المكالمات لم يُنشر بعد. يلزم إعداد رابط Render.");
+            return;
+        }
+        FirebaseUser me=auth.getCurrentUser();
+        if(me==null) { joiningCallId=null; showLogin(); return; }
+        me.getIdToken(true).addOnSuccessListener(tokenResult -> {
+            String idToken=tokenResult.getToken();
+            new Thread(() -> {
+                HttpURLConnection connection=null;
+                try {
+                    URL url=new URL(baseUrl.replaceAll("/+$","")+"/token");
+                    connection=(HttpURLConnection)url.openConnection();
+                    connection.setRequestMethod("POST");
+                    connection.setConnectTimeout(15000);
+                    connection.setReadTimeout(20000);
+                    connection.setDoOutput(true);
+                    connection.setRequestProperty("Content-Type","application/json");
+                    connection.setRequestProperty("Authorization","Bearer "+idToken);
+                    JSONObject payload=new JSONObject();
+                    payload.put("callId",callId);
+                    byte[] body=payload.toString().getBytes(StandardCharsets.UTF_8);
+                    try(OutputStream os=connection.getOutputStream()) { os.write(body); }
+                    int status=connection.getResponseCode();
+                    InputStream stream=(status>=200 && status<300)
+                        ? connection.getInputStream() : connection.getErrorStream();
+                    ByteArrayOutputStream buffer=new ByteArrayOutputStream();
+                    byte[] data=new byte[4096]; int n;
+                    while(stream!=null && (n=stream.read(data))!=-1) buffer.write(data,0,n);
+                    String response=new String(buffer.toByteArray(),StandardCharsets.UTF_8);
+                    JSONObject json=new JSONObject(response);
+                    if(status<200 || status>=300)
+                        throw new Exception(json.optString("error","رفض الخادم الاتصال"));
+                    String token=json.getString("token");
+                    String serverUrl=json.getString("serverUrl");
+                    runOnUiThread(() -> callManager.connect(serverUrl,token,sharedKey,new CallManager.Callback() {
+                        @Override public void onSuccess() {
+                            toast("تم الاتصال الصوتي المشفر");
+                            activeCallDialog=new AlertDialog.Builder(MainActivity.this)
+                                .setTitle("SIMSIM CALL")
+                                .setMessage("المكالمة الصوتية المشفرة نشطة")
+                                .setPositiveButton("إنهاء المكالمة",(dialog,which) -> endCurrentCall())
+                                .setCancelable(false).create();
+                            activeCallDialog.show();
+                        }
+                        @Override public void onError(String message) {
+                            joiningCallId=null;
+                            toast("فشل الاتصال: "+message);
+                        }
+                    }));
+                } catch(Exception error) {
+                    runOnUiThread(() -> {
+                        joiningCallId=null;
+                        toast("تعذر الحصول على رمز اتصال آمن: "+error.getMessage());
+                    });
+                } finally {
+                    if(connection!=null) connection.disconnect();
+                }
+            }).start();
+        }).addOnFailureListener(e -> {
+            joiningCallId=null;
+            toast("تعذر التحقق من حساب Firebase");
+        });
+    }
+
+
+    private void endCurrentCall() {
+        if(currentCallRef!=null) {
+            currentCallRef.update("status","ended","endedAt",FieldValue.serverTimestamp());
+        }
+        if(callManager!=null) callManager.disconnect(null);
+        if(currentCallListener!=null) currentCallListener.remove();
+        currentCallListener=null; currentCallRef=null; joiningCallId=null;
+        if(activeCallDialog!=null && activeCallDialog.isShowing()) activeCallDialog.dismiss();
+        toast("تم إنهاء المكالمة");
+    }
+
+    @Override public void onRequestPermissionsResult(int requestCode,String[] permissions,int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode,permissions,grantResults);
+        if(requestCode==701) {
+            boolean granted=grantResults.length>0 && grantResults[0]==PackageManager.PERMISSION_GRANTED;
+            if(!granted) {
+                pendingOutgoingCall=false; pendingCallId=null;
+                toast("يجب السماح باستخدام الميكروفون لإجراء المكالمة");
+                return;
+            }
+            if(pendingOutgoingCall) {
+                pendingOutgoingCall=false;
+                startOutgoingCall();
+            } else if(pendingCallId!=null) {
+                String id=pendingCallId; pendingCallId=null;
+                db.collection("calls").document(id).get()
+                    .addOnSuccessListener(this::joinCallFromDocument);
+            }
+        }
     }
 
     @Override protected void onResume() {
@@ -490,5 +828,8 @@ public class MainActivity extends Activity {
         super.onDestroy();
         presenceHandler.removeCallbacks(presenceBeat);
         if(contactsListener!=null) contactsListener.remove();
+        if(incomingCallsListener!=null) incomingCallsListener.remove();
+        if(currentCallListener!=null) currentCallListener.remove();
+        if(callManager!=null) callManager.release();
     }
 }

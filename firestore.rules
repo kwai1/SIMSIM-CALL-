@@ -6,10 +6,28 @@ service cloud.firestore {
       return request.auth != null;
     }
 
+    function isAdminUid(uid) {
+      return exists(/databases/$(database)/documents/admins/$(uid))
+        && get(/databases/$(database)/documents/admins/$(uid)).data.role == 'admin';
+    }
+
     function isAdmin() {
-      return signedIn()
-        && exists(/databases/$(database)/documents/admins/$(request.auth.uid))
-        && get(/databases/$(database)/documents/admins/$(request.auth.uid)).data.role == 'admin';
+      return signedIn() && isAdminUid(request.auth.uid);
+    }
+
+    function isActiveUser(uid) {
+      return signedIn() && (
+        (exists(/databases/$(database)/documents/users/$(uid))
+          && get(/databases/$(database)/documents/users/$(uid)).data.status == 'active')
+        || isAdminUid(uid)
+      );
+    }
+
+    function isChatMember(chatId) {
+      return isActiveUser(request.auth.uid)
+        && exists(/databases/$(database)/documents/chats/$(chatId))
+        && request.auth.uid in
+          get(/databases/$(database)/documents/chats/$(chatId)).data.memberIds;
     }
 
     match /admins/{uid} {
@@ -21,11 +39,9 @@ service cloud.firestore {
       allow get: if isAdmin()
         || (signedIn() && resource.data.status == 'نشط');
       allow list: if isAdmin();
-
       allow create: if isAdmin()
         && request.resource.data.keys().hasOnly(['status', 'createdAt'])
         && request.resource.data.status == 'نشط';
-
       allow update: if isAdmin()
         || (signedIn()
           && resource.data.status == 'نشط'
@@ -33,27 +49,55 @@ service cloud.firestore {
           && request.resource.data.usedBy == request.auth.uid
           && request.resource.data.diff(resource.data).affectedKeys()
               .hasOnly(['status', 'usedBy', 'usedAt']));
-
       allow delete: if isAdmin();
     }
 
     match /users/{uid} {
-      allow get: if signedIn() && request.auth.uid == uid;
+      allow get: if signedIn() && (request.auth.uid == uid || isAdmin());
       allow list: if isAdmin();
       allow create: if signedIn()
         && request.auth.uid == uid
-        && request.resource.data.keys().hasOnly(['email', 'createdAt', 'status'])
-        && request.resource.data.status == 'active';
-      allow update: if signedIn() && request.auth.uid == uid;
+        && request.resource.data.keys().hasOnly(['email', 'createdAt', 'status', 'invitationCode'])
+        && request.resource.data.status == 'active'
+        && request.resource.data.invitationCode is string
+        && existsAfter(/databases/$(database)/documents/invitations/$(request.resource.data.invitationCode))
+        && getAfter(/databases/$(database)/documents/invitations/$(request.resource.data.invitationCode)).data.status == 'مستخدم'
+        && getAfter(/databases/$(database)/documents/invitations/$(request.resource.data.invitationCode)).data.usedBy == request.auth.uid;
+      // A user cannot grant themselves admin status or reactivate a disabled account.
+      allow update: if (signedIn()
+          && request.auth.uid == uid
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['email']))
+        || (isAdmin()
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status'])
+          && request.resource.data.status in ['active', 'disabled']);
       allow delete: if false;
     }
 
     match /publicProfiles/{uid} {
-      allow get, list: if signedIn();
-      allow create, update: if signedIn()
+      allow get: if isAdmin() || (isActiveUser(request.auth.uid) && isActiveUser(uid));
+      allow list: if isAdmin();
+      allow create: if isActiveUser(uid)
         && request.auth.uid == uid
         && request.resource.data.uid == uid
-        && request.resource.data.keys().hasOnly(['uid', 'displayName', 'online', 'lastActive', 'createdAt'])
+        && request.resource.data.keys().hasOnly([
+          'uid', 'displayName', 'online', 'lastActive', 'createdAt',
+          'publicKey', 'userCode'
+        ])
+        && request.resource.data.displayName is string
+        && request.resource.data.displayName.size() >= 2
+        && request.resource.data.displayName.size() <= 30
+        && request.resource.data.online is bool
+        && request.resource.data.publicKey is string
+        && request.resource.data.userCode is string;
+      allow update: if isActiveUser(uid)
+        && request.auth.uid == uid
+        && request.resource.data.uid == uid
+        && request.resource.data.keys().hasOnly([
+          'uid', 'displayName', 'online', 'lastActive', 'createdAt',
+          'publicKey', 'userCode'
+        ])
+        && (!('publicKey' in resource.data) || request.resource.data.publicKey == resource.data.publicKey)
+        && (!('userCode' in resource.data) || request.resource.data.userCode == resource.data.userCode)
         && request.resource.data.displayName is string
         && request.resource.data.displayName.size() >= 2
         && request.resource.data.displayName.size() <= 30
@@ -61,38 +105,108 @@ service cloud.firestore {
       allow delete: if false;
     }
 
+    match /userCodes/{code} {
+      allow get: if isActiveUser(request.auth.uid)
+        && (!exists(/databases/$(database)/documents/userCodes/$(code))
+          || isActiveUser(resource.data.uid));
+      allow list: if false;
+      allow create: if isActiveUser(request.auth.uid)
+        && request.resource.data.keys().hasOnly(['uid', 'createdAt'])
+        && request.resource.data.uid == request.auth.uid
+        && existsAfter(/databases/$(database)/documents/publicProfiles/$(request.auth.uid))
+        && getAfter(/databases/$(database)/documents/publicProfiles/$(request.auth.uid)).data.userCode == code;
+      allow update, delete: if false;
+    }
+
     match /chats/{chatId} {
-      allow read: if signedIn() && request.auth.uid in resource.data.memberIds;
-      allow create: if signedIn()
+      allow get: if isActiveUser(request.auth.uid)
+        && (!exists(/databases/$(database)/documents/chats/$(chatId))
+          || request.auth.uid in resource.data.memberIds);
+      allow list: if false;
+      allow create: if isActiveUser(request.auth.uid)
+        && request.resource.data.keys().hasOnly(['memberIds', 'createdAt'])
         && request.resource.data.memberIds is list
         && request.resource.data.memberIds.size() == 2
-        && request.auth.uid in request.resource.data.memberIds;
+        && request.auth.uid in request.resource.data.memberIds
+        && isActiveUser(request.resource.data.memberIds[0])
+        && isActiveUser(request.resource.data.memberIds[1]);
       allow update: if signedIn()
         && request.auth.uid in resource.data.memberIds
         && request.resource.data.memberIds == resource.data.memberIds
         && request.resource.data.diff(resource.data).affectedKeys()
-          .hasOnly(['lastMessage', 'lastMessageAt']);
+          .hasOnly(['lastMessageAt']);
       allow delete: if false;
 
       match /messages/{messageId} {
-        function isChatMember() {
-          return signedIn()
-            && request.auth.uid in
-              get(/databases/$(database)/documents/chats/$(chatId)).data.memberIds;
-        }
-        allow read: if isChatMember();
-        allow create: if isChatMember()
+        allow read: if isChatMember(chatId);
+        allow create: if isChatMember(chatId)
+          && isActiveUser(request.auth.uid)
           && request.resource.data.senderId == request.auth.uid
-          && request.resource.data.text is string
-          && request.resource.data.text.size() > 0
-          && request.resource.data.text.size() <= 4000
-          && request.resource.data.keys().hasOnly(['senderId', 'text', 'createdAt']);
+          && request.resource.data.ciphertext is string
+          && request.resource.data.ciphertext.size() > 0
+          && request.resource.data.ciphertext.size() <= 24000
+          && request.resource.data.iv is string
+          && request.resource.data.wrappedKeys is map
+          && request.resource.data.encryptionVersion == 1
+          && request.resource.data.wrappedKeys.keys().hasAll(
+            get(/databases/$(database)/documents/chats/$(chatId)).data.memberIds
+          )
+          && request.resource.data.wrappedKeys.keys().hasOnly(
+            get(/databases/$(database)/documents/chats/$(chatId)).data.memberIds
+          )
+          && request.resource.data.keys().hasOnly([
+            'senderId', 'ciphertext', 'iv', 'wrappedKeys',
+            'encryptionVersion', 'createdAt'
+          ]);
         allow update, delete: if false;
       }
     }
 
     match /calls/{callId} {
-      allow read, write: if false;
+      allow get: if isActiveUser(request.auth.uid)
+        && (resource.data.callerUid == request.auth.uid
+          || resource.data.calleeUid == request.auth.uid);
+      // Incoming-call listener is restricted to documents addressed to this user.
+      allow list: if isActiveUser(request.auth.uid)
+        && resource.data.calleeUid == request.auth.uid;
+
+      allow create: if isActiveUser(request.auth.uid)
+        && request.resource.data.keys().hasOnly([
+          'callerUid', 'calleeUid', 'roomName', 'status',
+          'callKeyCiphertext', 'callKeyIv', 'callKeyWrappedKeys',
+          'encryptionVersion', 'createdAt'
+        ])
+        && request.resource.data.callerUid == request.auth.uid
+        && request.resource.data.calleeUid is string
+        && request.resource.data.calleeUid != request.auth.uid
+        && isActiveUser(request.resource.data.calleeUid)
+        && request.resource.data.roomName is string
+        && request.resource.data.status == 'ringing'
+        && request.resource.data.callKeyCiphertext is string
+        && request.resource.data.callKeyIv is string
+        && request.resource.data.callKeyWrappedKeys is map
+        && request.resource.data.callKeyWrappedKeys.keys().hasAll([
+          request.resource.data.callerUid, request.resource.data.calleeUid
+        ])
+        && request.resource.data.callKeyWrappedKeys.keys().hasOnly([
+          request.resource.data.callerUid, request.resource.data.calleeUid
+        ])
+        && request.resource.data.encryptionVersion == 1;
+
+      allow update: if isActiveUser(request.auth.uid)
+        && (resource.data.callerUid == request.auth.uid
+          || resource.data.calleeUid == request.auth.uid)
+        && request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly(['status', 'acceptedAt', 'endedAt'])
+        && (
+          (request.auth.uid == resource.data.calleeUid
+            && resource.data.status == 'ringing'
+            && request.resource.data.status in ['accepted', 'rejected'])
+          ||
+          (request.resource.data.status == 'ended'
+            && resource.data.status in ['ringing', 'accepted'])
+        );
+      allow delete: if false;
     }
   }
 }
