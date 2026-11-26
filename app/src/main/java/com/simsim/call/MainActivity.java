@@ -609,7 +609,10 @@ public class MainActivity extends Activity {
                         call.getReference().update(
                             "status","accepted",
                             "acceptedAt",FieldValue.serverTimestamp())
-                            .addOnSuccessListener(x -> joinCallFromDocument(call))
+                            .addOnSuccessListener(x -> {
+                                watchCurrentCall(call.getReference());
+                                joinCallFromDocument(call);
+                            })
                             .addOnFailureListener(e -> toast("تعذر قبول المكالمة")))
                     .setNegativeButton("رفض", (dialog,which) ->
                         call.getReference().update("status","rejected")
