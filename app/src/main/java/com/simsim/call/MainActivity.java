@@ -236,7 +236,7 @@ public class MainActivity extends Activity {
             String code=createCode();
             Map<String,Object> data=new HashMap<>();
             data.put("status","نشط"); data.put("createdAt",FieldValue.serverTimestamp());
-            db.collection("invitations").document(code).set(data)
+            db.collection("invitations").document(code).create(data)
                 .addOnSuccessListener(x -> showGeneratedCode(code))
                 .addOnFailureListener(err -> toast("تعذر إنشاء الدعوة. تحقق من قواعد Firestore"));
         });
