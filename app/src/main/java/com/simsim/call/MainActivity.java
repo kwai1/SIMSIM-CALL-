@@ -243,7 +243,7 @@ public class MainActivity extends Activity {
         });
         Button manage=button("إدارة المستخدمين");
         manage.setOnClickListener(v -> showAdminUsers());
-        Button logout=button("تسجيل الخروج"); logout.setOnClickListener(v -> showLogin());
+        Button logout=button("تسجيل الخروج"); logout.setOnClickListener(v -> { auth.signOut(); showLogin(); });
     }
 
 
