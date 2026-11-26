@@ -52,7 +52,6 @@ public class MainActivity extends Activity {
     private LinearLayout root;
     private FirebaseAuth auth;
     private FirebaseFirestore db;
-    private final String ADMIN_KEY = "SIMSIM-ADMIN-2026";
     private final Handler presenceHandler = new Handler(Looper.getMainLooper());
     private ListenerRegistration contactsListener;
     private LinearLayout contactsList;
@@ -302,10 +301,17 @@ public class MainActivity extends Activity {
                 .addOnSuccessListener(x -> {myDisplayName=value;saveName.setEnabled(true);toast("تم حفظ الاسم");startPresence();})
                 .addOnFailureListener(err -> {saveName.setEnabled(true);toast("تعذر حفظ الاسم");});
         });
+        Button copyUserCode=button("نسخ رمز المستخدم");
+        copyUserCode.setOnClickListener(v -> {
+            if(myUserCode==null){toast("انتظر تجهيز رمزك");return;}
+            ClipboardManager cm=(ClipboardManager)getSystemService(Context.CLIPBOARD_SERVICE);
+            cm.setPrimaryClip(ClipData.newPlainText("SIMSIM USER CODE",myUserCode));
+            toast("تم نسخ رمز المستخدم");
+        });
         Button search=button("⌕  البحث عن شخص برمز المستخدم");
         search.setOnClickListener(v -> showContacts());
         Button calls=button("◉  الاتصالات الصوتية");
-        calls.setOnClickListener(v -> toast("الاتصال الصوتي لم يُفعّل بعد؛ يجري تجهيز ربط LiveKit الآمن."));
+        calls.setOnClickListener(v -> toast("افتح محادثة مع الشخص ثم اضغط اتصال صوتي مشفّر."));
         Button logout=button("تسجيل الخروج");
         logout.setOnClickListener(v -> {
             updatePresence(false); profileReady=false; myPublicKey=null; myUserCode=null;
