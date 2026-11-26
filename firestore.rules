@@ -101,7 +101,9 @@ service cloud.firestore {
     }
 
     match /userCodes/{code} {
-      allow get: if isActiveUser(request.auth.uid) && isActiveUser(resource.data.uid);
+      allow get: if isActiveUser(request.auth.uid)
+        && (!exists(/databases/$(database)/documents/userCodes/$(code))
+          || isActiveUser(resource.data.uid));
       allow list: if false;
       allow create: if isActiveUser(request.auth.uid)
         && request.resource.data.keys().hasOnly(['uid', 'createdAt'])
