@@ -240,6 +240,8 @@ public class MainActivity extends Activity {
                 .addOnSuccessListener(x -> showGeneratedCode(code))
                 .addOnFailureListener(err -> toast("تعذر إنشاء الدعوة. تحقق من قواعد Firestore"));
         });
+        Button useApp=button("الدخول إلى التطبيق كمدير");
+        useApp.setOnClickListener(v -> showDashboard());
         Button manage=button("إدارة المستخدمين");
         manage.setOnClickListener(v -> showAdminUsers());
         Button logout=button("تسجيل الخروج"); logout.setOnClickListener(v -> { auth.signOut(); showLogin(); });
