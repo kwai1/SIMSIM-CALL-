@@ -34,9 +34,9 @@ import com.google.firebase.firestore.FirebaseFirestoreException;
 import com.google.android.gms.tasks.Task;
 
 public class MainActivity extends Activity {
-    private final int BG = Color.rgb(5, 9, 18);
-    private final int PANEL = Color.rgb(13, 22, 38);
-    private final int BLUE = Color.rgb(0, 190, 255);
+    private final int BG = Color.rgb(5, 3, 18);
+    private final int PANEL = Color.rgb(18, 10, 38);
+    private final int BLUE = Color.rgb(153, 48, 255);
     private final int WHITE = Color.WHITE;
     private final int GRAY = Color.rgb(145, 165, 185);
     private LinearLayout root;
@@ -95,19 +95,48 @@ public class MainActivity extends Activity {
         e.setInputType(type); e.setPadding(dp(15),0,dp(15),0); e.setBackground(shape(PANEL,BLUE));
         LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(-1,dp(58)); p.setMargins(0,dp(8),0,dp(8)); root.addView(e,p); return e;
     }
+    private GradientDrawable purpleGradient() {
+        GradientDrawable d = new GradientDrawable(
+            GradientDrawable.Orientation.LEFT_RIGHT,
+            new int[]{Color.rgb(184,55,255), Color.rgb(76,24,220), Color.rgb(120,35,255)});
+        d.setCornerRadius(dp(28));
+        d.setStroke(dp(1), Color.rgb(205,145,255));
+        return d;
+    }
+
     private void header() {
-        text("◈",55,BLUE,true); text("SIMSIM-CALL",32,WHITE,true);
-        text("PRIVATE COMMUNICATION NETWORK",11,BLUE,true);
-        text("SYSTEM STATUS  •  PROTECTED ACCESS",11,GRAY,false);
+        TextView mark = new TextView(this);
+        mark.setText("☎");
+        mark.setTextSize(54);
+        mark.setTextColor(WHITE);
+        mark.setGravity(Gravity.CENTER);
+        mark.setTypeface(null, Typeface.BOLD);
+        GradientDrawable emblem = new GradientDrawable(
+            GradientDrawable.Orientation.TL_BR,
+            new int[]{Color.rgb(194,72,255), Color.rgb(75,25,220)});
+        emblem.setShape(GradientDrawable.OVAL);
+        emblem.setStroke(dp(3), Color.rgb(225,190,255));
+        mark.setBackground(emblem);
+        LinearLayout.LayoutParams mp = new LinearLayout.LayoutParams(dp(116),dp(116));
+        mp.gravity = Gravity.CENTER;
+        mp.setMargins(0,dp(12),0,dp(12));
+        root.addView(mark,mp);
+        text("SIMSIM",34,WHITE,true);
+        text("CALL",34,BLUE,true);
+        text("اتصال آمن .. خصوصية كاملة",18,WHITE,true);
+        text("شبكة تواصل خاصة للأشخاص المصرّح لهم",13,GRAY,false);
     }
     private void toast(String s) { Toast.makeText(this,s,Toast.LENGTH_LONG).show(); }
 
     private void showLogin() {
-        setup(); header(); text("SECURITY GATE",20,WHITE,true);
-        text("تسجيل الدخول",17,BLUE,true);
+        setup();
+        header();
+        text("بوابة الدخول الخاصة",18,WHITE,true);
+        text("أهلاً بك في SIMSIM CALL",15,BLUE,true);
         final EditText email=input("البريد الإلكتروني",InputType.TYPE_CLASS_TEXT|InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS);
         final EditText password=input("كلمة المرور",InputType.TYPE_CLASS_TEXT|InputType.TYPE_TEXT_VARIATION_PASSWORD);
-        Button login=button("دخول إلى سمسم");
+        Button login=button("➜   تسجيل الدخول");
+        login.setBackground(purpleGradient());
         login.setOnClickListener(v -> {
             String e=email.getText().toString().trim(), p=password.getText().toString();
             if(e.isEmpty()||p.isEmpty()){toast("أدخل البريد الإلكتروني وكلمة المرور");return;}
@@ -120,9 +149,32 @@ public class MainActivity extends Activity {
         });
         Button register=button("إنشاء حساب باستخدام رمز دعوة");
         register.setOnClickListener(v -> showRegister());
-        Button admin=button("دخول المدير");
+        Button admin=button("⚙   دخول المدير");
         admin.setOnClickListener(v -> showAdminGate());
-        text("AUTHORIZED USERS ONLY",11,BLUE,true);
+
+        LinearLayout features = new LinearLayout(this);
+        features.setOrientation(LinearLayout.HORIZONTAL);
+        features.setGravity(Gravity.CENTER);
+        String[][] items = {{"☎","مكالمات"},{"◆","خصوصية"},{"▣","محادثات"}};
+        for(String[] item:items) {
+            LinearLayout cell=new LinearLayout(this);
+            cell.setOrientation(LinearLayout.VERTICAL);
+            cell.setGravity(Gravity.CENTER);
+            TextView symbol=new TextView(this);
+            symbol.setText(item[0]); symbol.setTextSize(25); symbol.setTextColor(BLUE);
+            symbol.setGravity(Gravity.CENTER);
+            TextView label=new TextView(this);
+            label.setText(item[1]); label.setTextSize(12); label.setTextColor(WHITE);
+            label.setGravity(Gravity.CENTER);
+            cell.addView(symbol); cell.addView(label);
+            features.addView(cell,new LinearLayout.LayoutParams(0,-2,1));
+        }
+        LinearLayout.LayoutParams fp=new LinearLayout.LayoutParams(-1,-2);
+        fp.setMargins(0,dp(22),0,dp(14));
+        root.addView(features,fp);
+        text("تيم آصف للبرمجة",15,BLUE,true);
+        text("SIMSIM CALL  •  الإصدار 1.0",11,GRAY,false);
+        text("AUTHORIZED USERS ONLY",10,GRAY,true);
     }
 
     private void showRegister() {
