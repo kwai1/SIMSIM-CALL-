@@ -5,7 +5,7 @@ import io.livekit.android.LiveKit
 import io.livekit.android.e2ee.BaseKeyProvider
 import io.livekit.android.e2ee.E2EEOptions
 import io.livekit.android.room.Room
-import io.livekit.android.room.RoomOptions
+import io.livekit.android.RoomOptions
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
