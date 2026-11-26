@@ -144,7 +144,7 @@ service cloud.firestore {
           && request.resource.data.senderId == request.auth.uid
           && request.resource.data.ciphertext is string
           && request.resource.data.ciphertext.size() > 0
-          && request.resource.data.ciphertext.size() <= 12000
+          && request.resource.data.ciphertext.size() <= 24000
           && request.resource.data.iv is string
           && request.resource.data.wrappedKeys is map
           && request.resource.data.encryptionVersion == 1
