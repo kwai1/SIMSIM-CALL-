@@ -109,7 +109,7 @@ public final class CryptoManager {
         byte[] encoded = Base64.decode(publicKeyBase64, Base64.NO_WRAP);
         byte[] digest = MessageDigest.getInstance("SHA-256").digest(encoded);
         StringBuilder hex = new StringBuilder();
-        for (byte value : digest) hex.append(String.format("%02X", value));
+        for (byte value : digest) hex.append(String.format("%02X", value & 0xFF));
         StringBuilder grouped = new StringBuilder();
         for (int i = 0; i < hex.length(); i += 4) {
             if (i > 0) grouped.append(' ');
