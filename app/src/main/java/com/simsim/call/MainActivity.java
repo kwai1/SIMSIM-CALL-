@@ -172,30 +172,29 @@ public class MainActivity extends Activity {
 
     private void consumeInvite(String code,FirebaseUser user,Button button) {
         DocumentReference invite=db.collection("invitations").document(code);
+        DocumentReference userRef=db.collection("users").document(user.getUid());
         db.runTransaction(transaction -> {
             com.google.firebase.firestore.DocumentSnapshot snap=transaction.get(invite);
             if(!snap.exists()) throw new FirebaseFirestoreException("رمز غير موجود",FirebaseFirestoreException.Code.NOT_FOUND);
             String status=snap.getString("status");
             if(!"نشط".equals(status)&&!"active".equalsIgnoreCase(status))
                 throw new FirebaseFirestoreException("رمز مستخدم أو غير نشط",FirebaseFirestoreException.Code.PERMISSION_DENIED);
-            transaction.update(invite,"status","مستخدم","usedBy",user.getUid(),"usedAt",FieldValue.serverTimestamp());
-            return null;
-        }).addOnCompleteListener(task -> {
-            if(!task.isSuccessful()){
-                user.delete();
-                button.setEnabled(true);
-                toast("رمز الدعوة غير صالح أو سبق استخدامه");
-                return;
-            }
             Map<String,Object> profile=new HashMap<>();
             profile.put("email",user.getEmail());
             profile.put("createdAt",FieldValue.serverTimestamp());
             profile.put("status","active");
             profile.put("invitationCode",code);
-            db.collection("users").document(user.getUid()).set(profile)
-                .addOnSuccessListener(x -> showDashboard())
-                .addOnFailureListener(err -> toast("تم إنشاء الحساب لكن تعذر حفظ الملف الشخصي"));
-        });
+            transaction.update(invite,"status","مستخدم","usedBy",user.getUid(),"usedAt",FieldValue.serverTimestamp());
+            transaction.set(userRef,profile);
+            return null;
+        }).addOnSuccessListener(x -> showDashboard())
+          .addOnFailureListener(error -> {
+              user.delete().addOnCompleteListener(deleted -> {
+                  auth.signOut();
+                  button.setEnabled(true);
+                  toast("رمز الدعوة غير صالح أو سبق استخدامه؛ لم يتم تفعيل الحساب");
+              });
+          });
     }
 
     private void showAdminGate() {
