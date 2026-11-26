@@ -69,7 +69,7 @@ service cloud.firestore {
     }
 
     match /publicProfiles/{uid} {
-      allow get: if isActiveUser(request.auth.uid) || isAdmin();
+      allow get: if isAdmin() || (isActiveUser(request.auth.uid) && isActiveUser(uid));
       allow list: if isAdmin();
       allow create: if isActiveUser(uid)
         && request.auth.uid == uid
@@ -101,7 +101,7 @@ service cloud.firestore {
     }
 
     match /userCodes/{code} {
-      allow get: if isActiveUser(request.auth.uid);
+      allow get: if isActiveUser(request.auth.uid) && isActiveUser(resource.data.uid);
       allow list: if false;
       allow create: if isActiveUser(request.auth.uid)
         && request.resource.data.keys().hasOnly(['uid', 'createdAt'])
