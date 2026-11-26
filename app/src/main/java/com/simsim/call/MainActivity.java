@@ -241,7 +241,37 @@ public class MainActivity extends Activity {
                 .addOnSuccessListener(x -> showGeneratedCode(code))
                 .addOnFailureListener(err -> toast("تعذر إنشاء الدعوة. تحقق من قواعد Firestore"));
         });
+        Button manage=button("إدارة المستخدمين");
+        manage.setOnClickListener(v -> showAdminUsers());
         Button logout=button("تسجيل الخروج"); logout.setOnClickListener(v -> showLogin());
+    }
+
+
+    private void showAdminUsers() {
+        setup(); header();
+        text("إدارة الحسابات",22,WHITE,true);
+        db.collection("users").get()
+            .addOnSuccessListener(snapshot -> {
+                if(snapshot.isEmpty()) text("لا توجد حسابات مسجلة بعد",14,GRAY,false);
+                for(com.google.firebase.firestore.DocumentSnapshot member:snapshot) {
+                    String email=member.getString("email");
+                    String status=member.getString("status");
+                    String uid=member.getId();
+                    text((email==null?uid:email)+"\n"+uid+"\nالحالة: "+status,13,WHITE,false);
+                    boolean active="active".equals(status);
+                    Button toggle=button(active?"تعطيل هذا الحساب":"إعادة تفعيل الحساب");
+                    toggle.setOnClickListener(v -> {
+                        toggle.setEnabled(false);
+                        db.collection("users").document(uid)
+                            .update("status",active?"disabled":"active")
+                            .addOnSuccessListener(x -> {toast(active?"تم تعطيل الحساب":"تم تفعيل الحساب");showAdminUsers();})
+                            .addOnFailureListener(e -> {toggle.setEnabled(true);toast("تعذر تعديل صلاحية الحساب");});
+                    });
+                }
+            })
+            .addOnFailureListener(e -> toast("تعذر تحميل قائمة المستخدمين. تحقق من صلاحية المدير."));
+        Button back=button("رجوع إلى لوحة المدير");
+        back.setOnClickListener(v -> showAdmin());
     }
 
     private String createCode() {
