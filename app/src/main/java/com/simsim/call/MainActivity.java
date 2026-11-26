@@ -537,6 +537,86 @@ public class MainActivity extends Activity {
             });
     }
 
+
+    private void attachIncomingCallsListener() {
+        FirebaseUser me=auth.getCurrentUser();
+        if(me==null || !profileReady) return;
+        if(incomingCallsListener!=null) incomingCallsListener.remove();
+        incomingCallsListener=db.collection("calls")
+            .whereEqualTo("calleeUid",me.getUid())
+            .addSnapshotListener((snap,error) -> {
+                if(error!=null || snap==null) return;
+                for(com.google.firebase.firestore.QueryDocumentSnapshot call:snap) {
+                    if("ringing".equals(call.getString("status"))) showIncomingCall(call);
+                }
+            });
+    }
+
+    private void showIncomingCall(com.google.firebase.firestore.DocumentSnapshot call) {
+        if(incomingCallDialog!=null && incomingCallDialog.isShowing()) return;
+        String callerUid=call.getString("callerUid");
+        if(callerUid==null) return;
+        db.collection("publicProfiles").document(callerUid).get()
+            .addOnSuccessListener(profile -> {
+                String callerName=profile.getString("displayName");
+                if(callerName==null) callerName="عضو سمسم";
+                if(isFinishing() || (incomingCallDialog!=null && incomingCallDialog.isShowing())) return;
+                incomingCallDialog=new AlertDialog.Builder(this)
+                    .setTitle("مكالمة واردة")
+                    .setMessage("مكالمة صوتية مشفرة من: "+callerName)
+                    .setPositiveButton("قبول", (dialog,which) ->
+                        call.getReference().update(
+                            "status","accepted",
+                            "acceptedAt",FieldValue.serverTimestamp())
+                            .addOnSuccessListener(x -> joinCallFromDocument(call))
+                            .addOnFailureListener(e -> toast("تعذر قبول المكالمة")))
+                    .setNegativeButton("رفض", (dialog,which) ->
+                        call.getReference().update("status","rejected")
+                            .addOnFailureListener(e -> toast("تعذر رفض المكالمة")))
+                    .setCancelable(false)
+                    .create();
+                incomingCallDialog.show();
+            });
+    }
+
+    private void startOutgoingCall() {
+        FirebaseUser me=auth.getCurrentUser();
+        if(me==null || activeOtherUid==null || activeOtherPublicKey==null
+                || myPublicKey==null || myUserCode==null) {
+            toast("افتح محادثة مع مستخدم صالح أولاً"); return;
+        }
+        if(checkSelfPermission(Manifest.permission.RECORD_AUDIO)!=PackageManager.PERMISSION_GRANTED) {
+            pendingOutgoingCall=true;
+            requestPermissions(new String[]{Manifest.permission.RECORD_AUDIO},701);
+            return;
+        }
+        final String callId=UUID.randomUUID().toString();
+        final String roomName="simsim-"+callId;
+        try {
+            String secret=CryptoManager.createCallSecret();
+            Map<String,Object> encrypted=CryptoManager.encryptForChat(
+                secret,me.getUid(),myPublicKey,activeOtherUid,activeOtherPublicKey);
+            Map<String,Object> call=new HashMap<>();
+            call.put("callerUid",me.getUid());
+            call.put("calleeUid",activeOtherUid);
+            call.put("roomName",roomName);
+            call.put("status","ringing");
+            call.put("callKeyCiphertext",encrypted.get("ciphertext"));
+            call.put("callKeyIv",encrypted.get("iv"));
+            call.put("callKeyWrappedKeys",encrypted.get("wrappedKeys"));
+            call.put("encryptionVersion",1);
+            call.put("createdAt",FieldValue.serverTimestamp());
+            DocumentReference ref=db.collection("calls").document(callId);
+            ref.set(call).addOnSuccessListener(x -> {
+                currentCallRef=ref;
+                watchCurrentCall(ref);
+                toast("تم إرسال طلب الاتصال. بانتظار قبول الطرف الآخر.");
+            }).addOnFailureListener(e -> toast("تعذر إنشاء المكالمة. تحقق من قواعد Firestore."));
+        } catch(Exception e) {
+            toast("تعذر إنشاء مفتاح تشفير المكالمة");
+        }
+    }
+
     @Override protected void onResume() {
         super.onResume();
         if(auth!=null && auth.getCurrentUser()!=null && profileReady) startPresence();
