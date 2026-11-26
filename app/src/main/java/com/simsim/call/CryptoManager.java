@@ -148,7 +148,7 @@ public final class CryptoManager {
         rsa.init(Cipher.DECRYPT_MODE, entry.getPrivateKey(), OAEP);
         byte[] rawAesKey = rsa.doFinal(Base64.decode((String) wrapped, Base64.NO_WRAP));
 
-        javax.crypto.SecretKeySpec aesKey = new javax.crypto.spec.SecretKeySpec(rawAesKey, "AES");
+        javax.crypto.spec.SecretKeySpec aesKey = new javax.crypto.spec.SecretKeySpec(rawAesKey, "AES");
         Cipher aes = Cipher.getInstance("AES/GCM/NoPadding");
         aes.init(Cipher.DECRYPT_MODE, aesKey, new GCMParameterSpec(
                 128, Base64.decode(ivBase64, Base64.NO_WRAP)));
