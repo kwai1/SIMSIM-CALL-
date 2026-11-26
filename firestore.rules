@@ -55,9 +55,9 @@ service cloud.firestore {
         && request.resource.data.keys().hasOnly(['email', 'createdAt', 'status', 'invitationCode'])
         && request.resource.data.status == 'active'
         && request.resource.data.invitationCode is string
-        && exists(/databases/$(database)/documents/invitations/$(request.resource.data.invitationCode))
-        && get(/databases/$(database)/documents/invitations/$(request.resource.data.invitationCode)).data.status == 'مستخدم'
-        && get(/databases/$(database)/documents/invitations/$(request.resource.data.invitationCode)).data.usedBy == request.auth.uid;
+        && existsAfter(/databases/$(database)/documents/invitations/$(request.resource.data.invitationCode))
+        && getAfter(/databases/$(database)/documents/invitations/$(request.resource.data.invitationCode)).data.status == 'مستخدم'
+        && getAfter(/databases/$(database)/documents/invitations/$(request.resource.data.invitationCode)).data.usedBy == request.auth.uid;
       // A user cannot grant themselves admin status or reactivate a disabled account.
       allow update: if (signedIn()
           && request.auth.uid == uid
