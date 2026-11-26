@@ -89,6 +89,19 @@ app.post("/token", tokenLimiter, async (req, res) => {
       return res.status(403).json({ error: "You are not allowed to join this call" });
     }
 
+    const otherUid = call.callerUid === uid ? call.calleeUid : call.callerUid;
+    const otherUserSnapshot = await firestore.collection("users").doc(otherUid).get();
+    if (!otherUserSnapshot.exists || otherUserSnapshot.get("status") !== "active") {
+      return res.status(403).json({ error: "The other participant is not authorized" });
+    }
+
+    const createdAt = call.createdAt && typeof call.createdAt.toDate === "function"
+      ? call.createdAt.toDate().getTime()
+      : 0;
+    if (!createdAt || Date.now() - createdAt > 2 * 60 * 60 * 1000) {
+      return res.status(403).json({ error: "This call invitation has expired" });
+    }
+
     const apiKey = process.env.LIVEKIT_API_KEY;
     const apiSecret = process.env.LIVEKIT_API_SECRET;
     const serverUrl = process.env.LIVEKIT_URL;
