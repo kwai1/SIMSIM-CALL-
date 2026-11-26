@@ -731,6 +731,38 @@ public class MainActivity extends Activity {
         });
     }
 
+
+    private void endCurrentCall() {
+        if(currentCallRef!=null) {
+            currentCallRef.update("status","ended","endedAt",FieldValue.serverTimestamp());
+        }
+        if(callManager!=null) callManager.disconnect(null);
+        if(currentCallListener!=null) currentCallListener.remove();
+        currentCallListener=null; currentCallRef=null; joiningCallId=null;
+        if(activeCallDialog!=null && activeCallDialog.isShowing()) activeCallDialog.dismiss();
+        toast("تم إنهاء المكالمة");
+    }
+
+    @Override public void onRequestPermissionsResult(int requestCode,String[] permissions,int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode,permissions,grantResults);
+        if(requestCode==701) {
+            boolean granted=grantResults.length>0 && grantResults[0]==PackageManager.PERMISSION_GRANTED;
+            if(!granted) {
+                pendingOutgoingCall=false; pendingCallId=null;
+                toast("يجب السماح باستخدام الميكروفون لإجراء المكالمة");
+                return;
+            }
+            if(pendingOutgoingCall) {
+                pendingOutgoingCall=false;
+                startOutgoingCall();
+            } else if(pendingCallId!=null) {
+                String id=pendingCallId; pendingCallId=null;
+                db.collection("calls").document(id).get()
+                    .addOnSuccessListener(this::joinCallFromDocument);
+            }
+        }
+    }
+
     @Override protected void onResume() {
         super.onResume();
         if(auth!=null && auth.getCurrentUser()!=null && profileReady) startPresence();
@@ -746,5 +778,8 @@ public class MainActivity extends Activity {
         super.onDestroy();
         presenceHandler.removeCallbacks(presenceBeat);
         if(contactsListener!=null) contactsListener.remove();
+        if(incomingCallsListener!=null) incomingCallsListener.remove();
+        if(currentCallListener!=null) currentCallListener.remove();
+        if(callManager!=null) callManager.release();
     }
 }
