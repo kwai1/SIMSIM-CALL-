@@ -31,3 +31,17 @@ jobs:
 
       - name: Build debug APK
         run: gradle --no-daemon :app:assembleDebug
+
+  server-check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Install server dependencies
+        run: npm install --prefix server
+      - name: Check server syntax
+        run: node --check server/index.js
