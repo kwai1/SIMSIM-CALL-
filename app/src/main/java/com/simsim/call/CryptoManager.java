@@ -104,6 +104,12 @@ public final class CryptoManager {
         return result;
     }
 
+    public static String createCallSecret() {
+        byte[] secret = new byte[32];
+        new SecureRandom().nextBytes(secret);
+        return Base64.encodeToString(secret, Base64.NO_WRAP);
+    }
+
     private static String wrapKey(byte[] rawKey, PublicKey publicKey) throws Exception {
         Cipher rsa = Cipher.getInstance("RSA/ECB/OAEPWithSHA-256AndMGF1Padding");
         rsa.init(Cipher.ENCRYPT_MODE, publicKey, OAEP);
