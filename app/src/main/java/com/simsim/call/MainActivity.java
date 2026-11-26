@@ -475,15 +475,38 @@ public class MainActivity extends Activity {
     private void openChat(String otherUid,String otherName) {
         FirebaseUser me=auth.getCurrentUser();
         if(me==null) { showLogin(); return; }
+        if(otherUid==null || otherUid.equals(me.getUid())) {
+            toast("اختر عضواً آخر لبدء المحادثة");
+            return;
+        }
         activeChatId=chatIdFor(me.getUid(),otherUid);
-        Map<String,Object> chat=new HashMap<>();
-        java.util.List<String> members=new java.util.ArrayList<>();
-        members.add(me.getUid()); members.add(otherUid);
-        chat.put("memberIds",members);
-        chat.put("createdAt",FieldValue.serverTimestamp());
-        db.collection("chats").document(activeChatId).set(chat,SetOptions.merge())
-            .addOnSuccessListener(x -> showChatScreen(otherName))
-            .addOnFailureListener(e -> toast("تعذر فتح المحادثة. تحقق من قواعد chats"));
+        final String chatId=activeChatId;
+        final DocumentReference chatRef=db.collection("chats").document(chatId);
+        db.runTransaction(transaction -> {
+            com.google.firebase.firestore.DocumentSnapshot existing=transaction.get(chatRef);
+            if(!existing.exists()) {
+                Map<String,Object> chat=new HashMap<>();
+                java.util.List<String> members=new java.util.ArrayList<>();
+                members.add(me.getUid());
+                members.add(otherUid);
+                chat.put("memberIds",members);
+                chat.put("createdAt",FieldValue.serverTimestamp());
+                transaction.set(chatRef,chat);
+            } else {
+                java.util.List<String> members=(java.util.List<String>)existing.get("memberIds");
+                if(members==null || !members.contains(me.getUid()) || !members.contains(otherUid)) {
+                    throw new FirebaseFirestoreException("Chat membership mismatch",FirebaseFirestoreException.Code.PERMISSION_DENIED);
+                }
+                // Existing chats are intentionally left unchanged. Firestore rules
+                // only permit lastMessage and lastMessageAt updates after creation.
+            }
+            return null;
+        }).addOnSuccessListener(x -> showChatScreen(otherName))
+          .addOnFailureListener(e -> {
+              String detail=e instanceof FirebaseFirestoreException
+                  ? ((FirebaseFirestoreException)e).getCode().name() : e.getClass().getSimpleName();
+              toast("تعذر فتح المحادثة: "+detail+". تحقق من نشر قواعد Firestore");
+          });
     }
 
     private void showChatScreen(String otherName) {
