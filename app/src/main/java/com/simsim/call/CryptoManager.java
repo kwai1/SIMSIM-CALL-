@@ -16,6 +16,7 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.LinkedHashMap;
 import java.security.SecureRandom;
+import java.security.MessageDigest;
 import javax.crypto.Cipher;
 import javax.crypto.KeyGenerator;
 import javax.crypto.SecretKey;
@@ -102,6 +103,19 @@ public final class CryptoManager {
         result.put("wrappedKeys", wrappedKeys);
         result.put("encryptionVersion", 1);
         return result;
+    }
+
+    public static String fingerprint(String publicKeyBase64) throws Exception {
+        byte[] encoded = Base64.decode(publicKeyBase64, Base64.NO_WRAP);
+        byte[] digest = MessageDigest.getInstance("SHA-256").digest(encoded);
+        StringBuilder hex = new StringBuilder();
+        for (byte value : digest) hex.append(String.format("%02X", value));
+        StringBuilder grouped = new StringBuilder();
+        for (int i = 0; i < hex.length(); i += 4) {
+            if (i > 0) grouped.append(' ');
+            grouped.append(hex, i, Math.min(i + 4, hex.length()));
+        }
+        return grouped.toString();
     }
 
     public static String createCallSecret() {
