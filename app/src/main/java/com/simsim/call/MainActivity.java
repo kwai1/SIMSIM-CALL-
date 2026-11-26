@@ -617,6 +617,120 @@ public class MainActivity extends Activity {
         }
     }
 
+
+    private void watchCurrentCall(DocumentReference ref) {
+        if(currentCallListener!=null) currentCallListener.remove();
+        currentCallListener=ref.addSnapshotListener((snapshot,error) -> {
+            if(error!=null || snapshot==null || !snapshot.exists()) return;
+            String status=snapshot.getString("status");
+            if("accepted".equals(status)) joinCallFromDocument(snapshot);
+            else if("rejected".equals(status)) {
+                joiningCallId=null;
+                toast("تم رفض المكالمة");
+                if(currentCallListener!=null) currentCallListener.remove();
+            } else if("ended".equals(status)) {
+                joiningCallId=null;
+                if(callManager!=null) callManager.disconnect(null);
+                if(activeCallDialog!=null && activeCallDialog.isShowing()) activeCallDialog.dismiss();
+                toast("انتهت المكالمة");
+            }
+        });
+    }
+
+    private void joinCallFromDocument(com.google.firebase.firestore.DocumentSnapshot call) {
+        FirebaseUser me=auth.getCurrentUser();
+        if(me==null || !call.exists()) return;
+        String callId=call.getId();
+        currentCallRef=call.getReference();
+        if(checkSelfPermission(Manifest.permission.RECORD_AUDIO)!=PackageManager.PERMISSION_GRANTED) {
+            pendingCallId=callId;
+            requestPermissions(new String[]{Manifest.permission.RECORD_AUDIO},701);
+            return;
+        }
+        if(callId.equals(joiningCallId)) return;
+        joiningCallId=callId;
+        try {
+            Map<String,Object> wrapped=(Map<String,Object>)call.get("callKeyWrappedKeys");
+            String sharedKey=CryptoManager.decryptMessage(
+                call.getString("callKeyCiphertext"),
+                call.getString("callKeyIv"),
+                wrapped,
+                me.getUid());
+            requestCallTokenAndConnect(callId,sharedKey);
+        } catch(Exception e) {
+            joiningCallId=null;
+            toast("تعذر فك مفتاح المكالمة على هذا الجهاز");
+        }
+    }
+
+    private void requestCallTokenAndConnect(String callId,String sharedKey) {
+        String baseUrl=BuildConfig.SIMSIM_SERVER_URL;
+        if(baseUrl==null || baseUrl.trim().isEmpty()) {
+            joiningCallId=null;
+            toast("خادم المكالمات لم يُنشر بعد. يلزم إعداد رابط Render.");
+            return;
+        }
+        FirebaseUser me=auth.getCurrentUser();
+        if(me==null) { joiningCallId=null; showLogin(); return; }
+        me.getIdToken(true).addOnSuccessListener(tokenResult -> {
+            String idToken=tokenResult.getToken();
+            new Thread(() -> {
+                HttpURLConnection connection=null;
+                try {
+                    URL url=new URL(baseUrl.replaceAll("/+$","")+"/token");
+                    connection=(HttpURLConnection)url.openConnection();
+                    connection.setRequestMethod("POST");
+                    connection.setConnectTimeout(15000);
+                    connection.setReadTimeout(20000);
+                    connection.setDoOutput(true);
+                    connection.setRequestProperty("Content-Type","application/json");
+                    connection.setRequestProperty("Authorization","Bearer "+idToken);
+                    JSONObject payload=new JSONObject();
+                    payload.put("callId",callId);
+                    byte[] body=payload.toString().getBytes(StandardCharsets.UTF_8);
+                    try(OutputStream os=connection.getOutputStream()) { os.write(body); }
+                    int status=connection.getResponseCode();
+                    InputStream stream=(status>=200 && status<300)
+                        ? connection.getInputStream() : connection.getErrorStream();
+                    ByteArrayOutputStream buffer=new ByteArrayOutputStream();
+                    byte[] data=new byte[4096]; int n;
+                    while(stream!=null && (n=stream.read(data))!=-1) buffer.write(data,0,n);
+                    String response=new String(buffer.toByteArray(),StandardCharsets.UTF_8);
+                    JSONObject json=new JSONObject(response);
+                    if(status<200 || status>=300)
+                        throw new Exception(json.optString("error","رفض الخادم الاتصال"));
+                    String token=json.getString("token");
+                    String serverUrl=json.getString("serverUrl");
+                    runOnUiThread(() -> callManager.connect(serverUrl,token,sharedKey,new CallManager.Callback() {
+                        @Override public void onSuccess() {
+                            toast("تم الاتصال الصوتي المشفر");
+                            activeCallDialog=new AlertDialog.Builder(MainActivity.this)
+                                .setTitle("SIMSIM CALL")
+                                .setMessage("المكالمة الصوتية المشفرة نشطة")
+                                .setPositiveButton("إنهاء المكالمة",(dialog,which) -> endCurrentCall())
+                                .setCancelable(false).create();
+                            activeCallDialog.show();
+                        }
+                        @Override public void onError(String message) {
+                            joiningCallId=null;
+                            toast("فشل الاتصال: "+message);
+                        }
+                    }));
+                } catch(Exception error) {
+                    runOnUiThread(() -> {
+                        joiningCallId=null;
+                        toast("تعذر الحصول على رمز اتصال آمن: "+error.getMessage());
+                    });
+                } finally {
+                    if(connection!=null) connection.disconnect();
+                }
+            }).start();
+        }).addOnFailureListener(e -> {
+            joiningCallId=null;
+            toast("تعذر التحقق من حساب Firebase");
+        });
+    }
+
     @Override protected void onResume() {
         super.onResume();
         if(auth!=null && auth.getCurrentUser()!=null && profileReady) startPresence();
