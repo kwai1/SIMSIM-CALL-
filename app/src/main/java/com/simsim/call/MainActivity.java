@@ -374,7 +374,7 @@ public class MainActivity extends Activity {
             .addOnSuccessListener(x -> {
                 if(blocked) db.collection("publicProfiles").document(uid).update("online",false);
                 Map<String,Object> log=new HashMap<>();
-                log.put("adminUid",auth.getUid()); log.put("targetUid",uid);
+                log.put("adminUid",auth.getCurrentUser()==null?"unknown":auth.getCurrentUser().getUid()); log.put("targetUid",uid);
                 log.put("action",blocked?"block_user":"unblock_user");
                 log.put("createdAt",FieldValue.serverTimestamp());
                 db.collection("adminLogs").add(log);
