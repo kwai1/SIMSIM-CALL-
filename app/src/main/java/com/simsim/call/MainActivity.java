@@ -391,11 +391,15 @@ public class MainActivity extends Activity {
         String deviceModel=android.os.Build.MANUFACTURER+" "+android.os.Build.MODEL;
         db.collection("loginEvents").whereEqualTo("userId",user.getUid()).get()
             .addOnSuccessListener(existing -> {
-                boolean suspicious=false;
+                boolean knownDevice=false;
                 for(QueryDocumentSnapshot event:existing) {
                     String oldDevice=event.getString("deviceId");
-                    if(oldDevice!=null && deviceId!=null && !oldDevice.equals(deviceId)) { suspicious=true; break; }
+                    if(oldDevice!=null && deviceId!=null && oldDevice.equals(deviceId)) {
+                        knownDevice=true;
+                        break;
+                    }
                 }
+                boolean suspicious=!existing.isEmpty() && !knownDevice;
                 Map<String,Object> record=new HashMap<>();
                 record.put("userId",user.getUid());
                 record.put("email",user.getEmail()==null?"":user.getEmail());
