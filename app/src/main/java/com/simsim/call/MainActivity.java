@@ -287,6 +287,8 @@ public class MainActivity extends Activity {
         text("إدارة الحسابات والأمان والاتصالات",13,GRAY,false);
         Button accounts=button("👥  قائمة الحسابات المسجلة");
         accounts.setOnClickListener(v -> showAdminList("الحسابات المسجلة",0));
+        Button logins=button("🕘  سجل دخول الحسابات والأجهزة");
+        logins.setOnClickListener(v -> showAdminList("سجل الدخول",4));
         Button online=button("🟢  قائمة المتصلين الآن");
         online.setOnClickListener(v -> showAdminList("المتصلون الآن",1));
         Button blocked=button("🚫  قائمة الحسابات المحظورة");
@@ -317,6 +319,7 @@ public class MainActivity extends Activity {
         if(mode==1) query=db.collection("publicProfiles").whereEqualTo("online",true);
         else if(mode==2) query=db.collection("users").whereEqualTo("status","blocked");
         else if(mode==3) query=db.collection("loginEvents").whereEqualTo("suspicious",true);
+        else if(mode==4) query=db.collection("loginEvents");
         else query=db.collection("users");
         query.get().addOnSuccessListener(snap -> {
             list.removeAllViews();
@@ -333,9 +336,12 @@ public class MainActivity extends Activity {
                 if(name==null || name.trim().isEmpty()) name=email==null ? uid : email;
                 if(name==null) name="حساب غير معروف";
                 String detail;
-                if(mode==3) {
+                if(mode==3 || mode==4) {
                     String device=doc.getString("deviceModel");
-                    detail="جهاز جديد مسجل: "+(device==null?"غير معروف":device);
+                    String emailValue=doc.getString("email");
+                    detail=(mode==3?"اشتباه: تسجيل دخول من جهاز مختلف":"تسجيل دخول")+
+                        " | "+(emailValue==null?"":emailValue)+
+                        " | الجهاز: "+(device==null?"غير معروف":device);
                 } else if(mode==1) detail="متصل الآن";
                 else detail="الحالة: "+(doc.getString("status")==null?"غير محددة":doc.getString("status"));
                 LinearLayout card=new LinearLayout(this);
@@ -349,7 +355,7 @@ public class MainActivity extends Activity {
                 card.addView(heading); card.addView(sub);
                 LinearLayout.LayoutParams cp=new LinearLayout.LayoutParams(-1,-2);
                 cp.setMargins(0,dp(5),0,dp(5)); list.addView(card,cp);
-                if(mode!=3 && uid!=null && !uid.equals(auth.getUid())) {
+                if(mode!=3 && mode!=4 && uid!=null && !uid.equals(auth.getUid())) {
                     Button action=new Button(this);
                     boolean isBlocked=mode==2 || "blocked".equals(doc.getString("status"));
                     action.setText(isBlocked?"إلغاء الحظر":"حظر الحساب");
