@@ -167,7 +167,7 @@ public class MainActivity extends Activity {
             login.setEnabled(false);
             auth.signInWithEmailAndPassword(e,p).addOnCompleteListener(task -> {
                 login.setEnabled(true);
-                if(task.isSuccessful()) showDashboard();
+                if(task.isSuccessful()) { recordLoginEvent(); showDashboard(); }
                 else toast(authErrorMessage(task.getException()));
             });
         });
@@ -284,6 +284,15 @@ public class MainActivity extends Activity {
 
     private void showAdmin() {
         setup(); header(); text("لوحة تحكم المدير",22,WHITE,true);
+        text("إدارة الحسابات والأمان والاتصالات",13,GRAY,false);
+        Button accounts=button("👥  قائمة الحسابات المسجلة");
+        accounts.setOnClickListener(v -> showAdminList("الحسابات المسجلة",0));
+        Button online=button("🟢  قائمة المتصلين الآن");
+        online.setOnClickListener(v -> showAdminList("المتصلون الآن",1));
+        Button blocked=button("🚫  قائمة الحسابات المحظورة");
+        blocked.setOnClickListener(v -> showAdminList("الحسابات المحظورة",2));
+        Button alerts=button("🛡  تنبيهات الاشتباه باختراق حساب");
+        alerts.setOnClickListener(v -> showAdminList("تنبيهات الأمان",3));
         Button generate=button("＋ إنشاء رمز دعوة جديد");
         generate.setOnClickListener(v -> {
             String code=createCode();
@@ -293,7 +302,103 @@ public class MainActivity extends Activity {
                 .addOnSuccessListener(x -> showGeneratedCode(code))
                 .addOnFailureListener(err -> toast("تعذر إنشاء الدعوة. تحقق من قواعد Firestore"));
         });
-        Button logout=button("تسجيل الخروج"); logout.setOnClickListener(v -> showLogin());
+        Button logout=button("تسجيل الخروج");
+        logout.setOnClickListener(v -> { auth.signOut(); showLogin(); });
+    }
+
+    private void showAdminList(String title, int mode) {
+        setup(); header(); text(title,21,WHITE,true);
+        LinearLayout list=new LinearLayout(this);
+        list.setOrientation(LinearLayout.VERTICAL);
+        root.addView(list,new LinearLayout.LayoutParams(-1,-2));
+        Button back=button("رجوع إلى لوحة المدير");
+        back.setOnClickListener(v -> showAdmin());
+        com.google.firebase.firestore.Query query;
+        if(mode==1) query=db.collection("publicProfiles").whereEqualTo("online",true);
+        else if(mode==2) query=db.collection("users").whereEqualTo("status","blocked");
+        else if(mode==3) query=db.collection("loginEvents").whereEqualTo("suspicious",true);
+        else query=db.collection("users");
+        query.get().addOnSuccessListener(snap -> {
+            list.removeAllViews();
+            if(snap.isEmpty()) {
+                TextView empty=new TextView(this);
+                empty.setText(mode==3 ? "لا توجد تنبيهات اشتباه مسجلة." : "لا توجد سجلات لعرضها.");
+                empty.setTextColor(GRAY); empty.setGravity(Gravity.CENTER); empty.setPadding(0,dp(20),0,dp(20));
+                list.addView(empty); return;
+            }
+            for(QueryDocumentSnapshot doc:snap) {
+                String uid=mode==1 ? doc.getString("uid") : (mode==3 ? doc.getString("userId") : doc.getId());
+                String name=doc.getString("displayName");
+                String email=doc.getString("email");
+                if(name==null || name.trim().isEmpty()) name=email==null ? uid : email;
+                if(name==null) name="حساب غير معروف";
+                String detail;
+                if(mode==3) {
+                    String device=doc.getString("deviceModel");
+                    detail="جهاز جديد مسجل: "+(device==null?"غير معروف":device);
+                } else if(mode==1) detail="متصل الآن";
+                else detail="الحالة: "+(doc.getString("status")==null?"غير محددة":doc.getString("status"));
+                LinearLayout card=new LinearLayout(this);
+                card.setOrientation(LinearLayout.VERTICAL);
+                card.setPadding(dp(14),dp(12),dp(14),dp(12));
+                card.setBackground(shape(PANEL,BLUE));
+                TextView heading=new TextView(this);
+                heading.setText(name); heading.setTextColor(WHITE); heading.setTextSize(16); heading.setTypeface(null,Typeface.BOLD);
+                TextView sub=new TextView(this);
+                sub.setText(detail+(uid==null?"":"\nUID: "+uid)); sub.setTextColor(GRAY); sub.setTextSize(12);
+                card.addView(heading); card.addView(sub);
+                LinearLayout.LayoutParams cp=new LinearLayout.LayoutParams(-1,-2);
+                cp.setMargins(0,dp(5),0,dp(5)); list.addView(card,cp);
+                if(mode!=3 && uid!=null && !uid.equals(auth.getUid())) {
+                    Button action=new Button(this);
+                    boolean isBlocked=mode==2 || "blocked".equals(doc.getString("status"));
+                    action.setText(isBlocked?"إلغاء الحظر":"حظر الحساب");
+                    action.setAllCaps(false);
+                    card.addView(action);
+                    action.setOnClickListener(v -> setUserBlocked(uid,!isBlocked));
+                }
+            }
+        }).addOnFailureListener(e -> toast("تعذر تحميل القائمة. تحقق من قواعد Firestore"));
+    }
+
+    private void setUserBlocked(String uid, boolean blocked) {
+        Map<String,Object> update=new HashMap<>();
+        update.put("status",blocked?"blocked":"active");
+        db.collection("users").document(uid).update(update)
+            .addOnSuccessListener(x -> {
+                if(blocked) db.collection("publicProfiles").document(uid).update("online",false);
+                Map<String,Object> log=new HashMap<>();
+                log.put("adminUid",auth.getUid()); log.put("targetUid",uid);
+                log.put("action",blocked?"block_user":"unblock_user");
+                log.put("createdAt",FieldValue.serverTimestamp());
+                db.collection("adminLogs").add(log);
+                toast(blocked?"تم حظر الحساب":"تم إلغاء حظر الحساب");
+                showAdmin();
+            })
+            .addOnFailureListener(e -> toast("تعذر تغيير حالة الحساب. تحقق من صلاحية المدير"));
+    }
+
+    private void recordLoginEvent() {
+        FirebaseUser user=auth.getCurrentUser();
+        if(user==null) return;
+        String deviceId=android.provider.Settings.Secure.getString(getContentResolver(),android.provider.Settings.Secure.ANDROID_ID);
+        String deviceModel=android.os.Build.MANUFACTURER+" "+android.os.Build.MODEL;
+        db.collection("loginEvents").whereEqualTo("userId",user.getUid()).get()
+            .addOnSuccessListener(existing -> {
+                boolean suspicious=false;
+                for(QueryDocumentSnapshot event:existing) {
+                    String oldDevice=event.getString("deviceId");
+                    if(oldDevice!=null && deviceId!=null && !oldDevice.equals(deviceId)) { suspicious=true; break; }
+                }
+                Map<String,Object> record=new HashMap<>();
+                record.put("userId",user.getUid());
+                record.put("email",user.getEmail()==null?"":user.getEmail());
+                record.put("deviceId",deviceId==null?"unknown":deviceId);
+                record.put("deviceModel",deviceModel);
+                record.put("suspicious",suspicious);
+                record.put("createdAt",FieldValue.serverTimestamp());
+                db.collection("loginEvents").add(record);
+            });
     }
 
     private String createCode() {
@@ -315,6 +420,24 @@ public class MainActivity extends Activity {
     }
 
     private void showDashboard() {
+        FirebaseUser current=auth.getCurrentUser();
+        if(current==null){showLogin();return;}
+        db.collection("users").document(current.getUid()).get()
+            .addOnSuccessListener(doc -> {
+                if(doc.exists() && "blocked".equals(doc.getString("status"))) {
+                    auth.signOut();
+                    toast("تم إيقاف هذا الحساب من الإدارة");
+                    showLogin();
+                } else showDashboardContent();
+            })
+            .addOnFailureListener(err -> {
+                toast("تعذر التحقق من حالة الحساب");
+                auth.signOut();
+                showLogin();
+            });
+    }
+
+    private void showDashboardContent() {
         setup(); header(); text("ACCESS GRANTED",20,BLUE,true);
         text("مرحباً بك في شبكة سمسم",19,WHITE,true);
         FirebaseUser u=auth.getCurrentUser();
