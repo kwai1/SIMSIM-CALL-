@@ -44,13 +44,13 @@ service cloud.firestore {
         && request.auth.uid == uid
         && request.resource.data.keys().hasOnly(['email', 'createdAt', 'status'])
         && request.resource.data.status == 'active';
-      allow update: if signedIn() && request.auth.uid == uid;
+      allow update: if isAdmin();
       allow delete: if false;
     }
 
     match /publicProfiles/{uid} {
       allow get, list: if signedIn();
-      allow create, update: if signedIn()
+      allow create: if signedIn()
         && request.auth.uid == uid
         && request.resource.data.uid == uid
         && request.resource.data.keys().hasOnly(['uid', 'displayName', 'online', 'lastActive', 'createdAt'])
@@ -58,6 +58,14 @@ service cloud.firestore {
         && request.resource.data.displayName.size() >= 2
         && request.resource.data.displayName.size() <= 30
         && request.resource.data.online is bool;
+      allow update: if isAdmin() || (signedIn()
+        && request.auth.uid == uid
+        && request.resource.data.uid == uid
+        && request.resource.data.keys().hasOnly(['uid', 'displayName', 'online', 'lastActive', 'createdAt'])
+        && request.resource.data.displayName is string
+        && request.resource.data.displayName.size() >= 2
+        && request.resource.data.displayName.size() <= 30
+        && request.resource.data.online is bool);
       allow delete: if false;
     }
 
@@ -89,6 +97,25 @@ service cloud.firestore {
           && request.resource.data.keys().hasOnly(['senderId', 'text', 'createdAt']);
         allow update, delete: if false;
       }
+    }
+
+    match /loginEvents/{eventId} {
+      allow create: if signedIn()
+        && request.resource.data.userId == request.auth.uid
+        && request.resource.data.keys().hasOnly([
+          'userId', 'email', 'deviceId', 'deviceModel', 'suspicious', 'createdAt'
+        ])
+        && request.resource.data.deviceId is string
+        && request.resource.data.deviceModel is string
+        && request.resource.data.suspicious is bool;
+      allow read: if isAdmin()
+        || (signedIn() && resource.data.userId == request.auth.uid);
+      allow update, delete: if false;
+    }
+
+    match /adminLogs/{logId} {
+      allow create, read: if isAdmin();
+      allow update, delete: if false;
     }
 
     match /calls/{callId} {
